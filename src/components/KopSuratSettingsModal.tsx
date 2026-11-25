@@ -288,6 +288,9 @@ export function KopSuratSettingsModal({
                       {draft.contactLine && (
                         <p className="text-[11px] text-slate-700">{draft.contactLine}</p>
                       )}
+                      {draft.websiteLine && (
+                        <p className="text-[11px] text-slate-700">{draft.websiteLine}</p>
+                      )}
                     </div>
 
                     {draft.rightLogoDataUrl ? (
@@ -335,6 +338,18 @@ export function KopSuratSettingsModal({
                     <ImagePlus className="h-3.5 w-3.5" aria-hidden="true" />
                     <span>{draft.bannerImageDataUrl ? 'Ganti Berkas Kop' : 'Pilih Berkas Kop'}</span>
                   </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDraft((prev) => ({
+                        ...prev,
+                        bannerImageDataUrl: '/assets/aistudio/image_53f155ea.png',
+                      }))
+                    }
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                  >
+                    <span>Pakai Lampiran Kop SMAN 9</span>
+                  </button>
                   {draft.bannerImageDataUrl && (
                     <button
                       type="button"
@@ -364,15 +379,31 @@ export function KopSuratSettingsModal({
                     <span className="text-xs font-medium text-slate-800">
                       Logo Kiri (Pemprov / Sekolah)
                     </span>
-                    {draft.leftLogoDataUrl && (
-                      <button
-                        type="button"
-                        onClick={() => setDraft((prev) => ({ ...prev, leftLogoDataUrl: '' }))}
-                        className="text-[11px] font-medium text-rose-600 hover:underline"
-                      >
-                        Pakai Ikon Bawaan
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {draft.leftLogoDataUrl !== '/assets/logo-jatim-sman9.png' && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDraft((prev) => ({
+                              ...prev,
+                              leftLogoDataUrl: '/assets/logo-jatim-sman9.png',
+                            }))
+                          }
+                          className="text-[11px] font-medium text-blue-700 hover:underline"
+                        >
+                          Pakai Logo Jatim
+                        </button>
+                      )}
+                      {draft.leftLogoDataUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setDraft((prev) => ({ ...prev, leftLogoDataUrl: '' }))}
+                          className="text-[11px] font-medium text-rose-600 hover:underline"
+                        >
+                          Hapus
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="mt-2.5 flex items-center gap-3">
                     <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-50">
@@ -530,7 +561,7 @@ export function KopSuratSettingsModal({
                 </div>
                 <div className="sm:col-span-2">
                   <label htmlFor="kop-contact" className="block text-xs font-medium text-slate-700">
-                    Baris 5 (Telepon, Email, Laman Sekolah)
+                    Baris 5 (Telepon & Faksimili)
                   </label>
                   <input
                     id="kop-contact"
@@ -538,6 +569,20 @@ export function KopSuratSettingsModal({
                     value={draft.contactLine}
                     onChange={(e) =>
                       setDraft((prev) => ({ ...prev, contactLine: e.target.value }))
+                    }
+                    className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-3 text-xs text-slate-900"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label htmlFor="kop-website" className="block text-xs font-medium text-slate-700">
+                    Baris 6 (Laman, Surel & NPSN)
+                  </label>
+                  <input
+                    id="kop-website"
+                    type="text"
+                    value={draft.websiteLine}
+                    onChange={(e) =>
+                      setDraft((prev) => ({ ...prev, websiteLine: e.target.value }))
                     }
                     className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-3 text-xs text-slate-900"
                   />

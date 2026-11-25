@@ -192,23 +192,26 @@ export function DocumentPrintView({
 
               <div className="min-w-0 flex-1">
                 {kopSurat.provinceLine && (
-                  <p className="text-xs font-semibold tracking-wider text-slate-800">
+                  <p className="text-sm font-medium tracking-wide text-slate-900">
                     {kopSurat.provinceLine}
                   </p>
                 )}
                 {kopSurat.departmentLine && (
-                  <p className="text-sm font-bold tracking-wide text-slate-900">
+                  <p className="text-sm font-semibold tracking-wide text-slate-900">
                     {kopSurat.departmentLine}
                   </p>
                 )}
-                <h2 className="mt-0.5 text-xl font-bold tracking-tight text-slate-950">
+                <h2 className="mt-0.5 text-xl font-bold tracking-wide text-slate-950">
                   {kopSurat.schoolNameLine || SCHOOL_INFO.name}
                 </h2>
                 {kopSurat.addressLine && (
-                  <p className="mt-1 text-xs text-slate-700">{kopSurat.addressLine}</p>
+                  <p className="mt-0.5 text-xs text-slate-800">{kopSurat.addressLine}</p>
                 )}
                 {kopSurat.contactLine && (
-                  <p className="text-xs text-slate-700">{kopSurat.contactLine}</p>
+                  <p className="text-xs text-slate-800">{kopSurat.contactLine}</p>
+                )}
+                {kopSurat.websiteLine && (
+                  <p className="text-xs text-slate-800">{kopSurat.websiteLine}</p>
                 )}
               </div>
 

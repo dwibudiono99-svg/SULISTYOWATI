@@ -21,14 +21,15 @@ const STORE_PATH = path.resolve(DATA_DIR, 'tu_store.json');
 const DEFAULT_KOP_SURAT: KopSuratConfig = {
   mode: 'custom',
   bannerImageDataUrl: '',
-  leftLogoDataUrl: '',
+  leftLogoDataUrl: '/assets/logo-jatim-sman9.png',
   rightLogoDataUrl: '',
   provinceLine: 'PEMERINTAH PROVINSI JAWA TIMUR',
   departmentLine: 'DINAS PENDIDIKAN',
   schoolNameLine: 'SMA NEGERI 9 SURABAYA',
-  addressLine: 'Jl. Wijaya Kusuma No. 48, Ketabang, Kec. Genteng, Kota Surabaya, Jawa Timur 60272',
-  contactLine: 'Telp. (031) 5342608 · Email: smanixsurabaya@gmail.com · Laman: sman9sby.sch.id',
-  dividerStyle: 'double',
+  addressLine: 'Jalan Wijayakusuma Nomor 48, Ketabang, Genteng, Surabaya, Jawa Timur 60272',
+  contactLine: 'Telepon (031) 5342608 - Faksimili (031) 5477817',
+  websiteLine: 'Laman : sman9sby.sch.id  Surel : smanixsurabaya@gmail.com, NPSN : 20532263',
+  dividerStyle: 'thick-thin',
   cityName: 'Surabaya',
   principalTitle: 'Kepala Sekolah,',
   principalName: 'Kepala SMA Negeri 9 Surabaya',
@@ -908,9 +909,14 @@ function loadInitialSeeds(): Pick<ServerStore, 'students' | 'requests' | 'agenda
   };
 }
 
+const BUILTIN_KOP_ASSETS = new Set([
+  '/assets/logo-jatim-sman9.png',
+  '/assets/aistudio/image_53f155ea.png',
+]);
+
 function isSafeRasterImageDataUrl(value: unknown): value is string {
   if (typeof value !== 'string') return false;
-  if (value === '') return true;
+  if (value === '' || BUILTIN_KOP_ASSETS.has(value)) return true;
   if (value.length > 2_800_000) return false;
   return /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value);
 }
@@ -970,6 +976,7 @@ function sanitizeKopSurat(
       schoolNameLine: cleanText(raw.schoolNameLine, fallback.schoolNameLine, 120),
       addressLine: cleanText(raw.addressLine, fallback.addressLine, 220),
       contactLine: cleanText(raw.contactLine, fallback.contactLine, 220),
+      websiteLine: cleanText(raw.websiteLine, fallback.websiteLine, 220),
       dividerStyle,
       cityName: cleanText(raw.cityName, fallback.cityName, 80) || 'Surabaya',
       principalTitle: cleanText(raw.principalTitle, fallback.principalTitle, 100) || 'Kepala Sekolah,',

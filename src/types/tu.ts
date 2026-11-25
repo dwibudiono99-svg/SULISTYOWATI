@@ -189,6 +189,7 @@ export interface KopSuratConfig {
   schoolNameLine: string;
   addressLine: string;
   contactLine: string;
+  websiteLine: string;
   dividerStyle: KopDividerStyle;
   cityName: string;
   principalTitle: string;
