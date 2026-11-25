@@ -1,6 +1,6 @@
 import { Printer } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { SCHOOL_INFO } from '../data/tuCatalog';
+import { SCHOOL_INFO } from '../config/schoolConfig';
 import { ServiceRequest, UserMode } from '../types/tu';
 import { formatTanggalIndonesia, formatTanggalSuratResmi } from '../utils/formatters';
 
@@ -290,9 +290,14 @@ export function DocumentPrintView({
             </div>
 
             <div className="flex items-end justify-between border-t border-slate-200 pt-6 text-xs text-slate-600">
-              <p className="max-w-xs">
-                Tunjukkan bukti tanda terima atau sebutkan kode tiket saat mengambil dokumen di Loket Tata Usaha SMAN 9 Surabaya.
-              </p>
+              <div className="max-w-sm space-y-1">
+                <p>
+                  Tunjukkan bukti tanda terima atau sebutkan kode tiket saat mengambil dokumen di Loket Tata Usaha SMAN 9 Surabaya.
+                </p>
+                <p className="font-mono text-[11px] text-slate-500">
+                  Lacak online: {SCHOOL_INFO.publicPortalUrl}
+                </p>
+              </div>
               <div className="w-52 text-center text-slate-900">
                 <p>Surabaya, {formatTanggalSuratResmi(activeReq.createdAt)}</p>
                 <p>Petugas Loket TU,</p>

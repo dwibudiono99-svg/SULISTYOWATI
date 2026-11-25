@@ -1,6 +1,6 @@
 import { CheckSquare, ClipboardList, Database, Send, Square } from 'lucide-react';
 import { FormEvent, useEffect, useState } from 'react';
-import { SCHOOL_INFO, TU_SERVICE_CATALOG } from '../data/tuCatalog';
+import { SCHOOL_INFO, TU_SERVICE_CATALOG } from '../config/schoolConfig';
 import { ApplicantRole, DapodikStudent, ServiceCategoryId, ServiceRequest, UserMode } from '../types/tu';
 import { generateTicketCode } from '../utils/formatters';
 

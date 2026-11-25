@@ -11,7 +11,7 @@ import { QueueTrackingView } from './components/QueueTrackingView';
 import { RequestDetailDrawer } from './components/RequestDetailDrawer';
 import { Sidebar } from './components/Sidebar';
 import { SubmitRequestView } from './components/SubmitRequestView';
-import { SCHOOL_INFO } from './data/tuCatalog';
+import { SCHOOL_INFO } from './config/schoolConfig';
 import {
   AgendaEntry,
   DapodikStudent,
@@ -610,9 +610,20 @@ export default function App() {
             <span>
               SIP TU {SCHOOL_INFO.shortName} · {SCHOOL_INFO.address}
             </span>
-            <span>
-              Telp. {SCHOOL_INFO.phone} · {SCHOOL_INFO.email}
-            </span>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <a
+                href={SCHOOL_INFO.publicPortalUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-blue-700 hover:underline"
+              >
+                {SCHOOL_INFO.publicPortalUrl}
+              </a>
+              <span aria-hidden="true">·</span>
+              <span>
+                Telp. {SCHOOL_INFO.phone} · {SCHOOL_INFO.email}
+              </span>
+            </div>
           </div>
         </footer>
       </div>

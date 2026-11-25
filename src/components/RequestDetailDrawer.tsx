@@ -1,6 +1,6 @@
 import { CheckCircle2, Printer, Save, Sparkles, X } from 'lucide-react';
 import { FormEvent, useEffect, useState } from 'react';
-import { SCHOOL_INFO } from '../data/tuCatalog';
+import { SCHOOL_INFO } from '../config/schoolConfig';
 import { RequestStatus, ServiceRequest, UserMode } from '../types/tu';
 import { formatTanggalIndonesia, generateOfficialLetterNumber } from '../utils/formatters';
 import { StatusIndicator } from './StatusIndicator';

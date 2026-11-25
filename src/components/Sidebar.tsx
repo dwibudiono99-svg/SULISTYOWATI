@@ -11,7 +11,7 @@ import {
   ShieldCheck,
   X,
 } from 'lucide-react';
-import { SCHOOL_INFO } from '../data/tuCatalog';
+import { SCHOOL_INFO } from '../config/schoolConfig';
 import { UserMode, WorkspaceTab } from '../types/tu';
 
 interface SidebarProps {

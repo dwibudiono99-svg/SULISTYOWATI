@@ -1,6 +1,6 @@
 import { FilePlus2, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { TU_SERVICE_CATALOG } from '../data/tuCatalog';
+import { TU_SERVICE_CATALOG } from '../config/schoolConfig';
 import { RequestStatus, ServiceRequest } from '../types/tu';
 import { formatTanggalIndonesia } from '../utils/formatters';
 import { StatusIndicator } from './StatusIndicator';

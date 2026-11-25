@@ -1,0 +1,157 @@
+import { ServiceCatalogItem } from '../types/tu';
+
+export const SCHOOL_INFO = {
+  province: 'PEMERINTAH PROVINSI JAWA TIMUR',
+  department: 'DINAS PENDIDIKAN',
+  name: 'SMA NEGERI 9 SURABAYA',
+  shortName: 'SMAN 9 Surabaya',
+  address: 'Jl. Wijaya Kusuma No. 48, Ketabang, Kec. Genteng, Kota Surabaya, Jawa Timur 60272',
+  phone: '(031) 5342608',
+  email: 'smanixsurabaya@gmail.com',
+  website: 'https://sman9sby.sch.id',
+  publicPortalUrl: 'https://ais-pre-ragqtjuelmbea42z537m6f-73250755094.asia-southeast1.run.app',
+  serviceHours: 'Senin – Kamis 07.00 – 15.30 WIB · Jumat 07.00 – 14.30 WIB',
+  campusImage: '/src/assets/images/sman9_campus_facade_1795598581053.jpg',
+  staffAvatar: '/src/assets/images/tu_staff_avatar_1795598580710.jpg',
+  staffName: 'Sulistyowati, S.Pd.',
+  staffRole: 'Koordinator Pelayanan Tata Usaha',
+};
+
+export const TU_SERVICE_CATALOG: ServiceCatalogItem[] = [
+  {
+    id: 'surat-aktif',
+    code: 'TU-01',
+    title: 'Surat Keterangan Siswa Aktif',
+    shortTitle: 'Siswa Aktif',
+    slaDays: 1,
+    targetAudience: 'Siswa & Orang Tua',
+    description:
+      'Penerbitan surat resmi keterangan masih aktif bersekolah untuk keperluan beasiswa, tunjangan gaji orang tua, KIP, atau administrasi perbankan.',
+    requirements: [
+      'Kartu Pelajar / Bukti Identitas Siswa (NIS & NISN)',
+      'Fotokopi Kartu Keluarga (jika untuk tunjangan orang tua / instansi)',
+      'Catatan nama instansi atau tujuan surat yang jelas',
+    ],
+    samplePurposes: [
+      'Pengajuan Beasiswa Prestasi Pemerintah Kota Surabaya',
+      'Kelengkapan Tunjangan Anak ASN Orang Tua',
+      'Pembukaan Rekening Pelajar / PIP',
+    ],
+  },
+  {
+    id: 'legalisir',
+    code: 'TU-02',
+    title: 'Legalisir Ijazah, SKL & Rapor',
+    shortTitle: 'Legalisir Dokumen',
+    slaDays: 2,
+    targetAudience: 'Alumni & Siswa',
+    description:
+      'Pengesahan fotokopi Ijazah, Surat Keterangan Lulus (SKL), atau Rapor oleh Kepala SMA Negeri 9 Surabaya untuk pendaftaran kuliah maupun melamar kerja.',
+    requirements: [
+      'Dokumen asli (Ijazah / SKL / Rapor) ditunjukkan saat verifikasi loket',
+      'Fotokopi dokumen rapi sesuai jumlah lembar yang dilegalisir (maks. 10 lembar)',
+      'Identitas pemohon (KTP / Kartu Pelajar)',
+    ],
+    samplePurposes: [
+      'Pendaftaran SNBP / SNBT / Jalur Mandiri Perguruan Tinggi',
+      'Seleksi CPNS / TNI / Polri / Rekrutmen BUMN',
+      'Persyaratan Melamar Pekerjaan',
+    ],
+  },
+  {
+    id: 'mutasi',
+    code: 'TU-03',
+    title: 'Surat Keterangan Pindah Sekolah (Mutasi)',
+    shortTitle: 'Mutasi Siswa',
+    slaDays: 3,
+    targetAudience: 'Siswa & Orang Tua',
+    description:
+      'Pengurusan berkas mutasi keluar termasuk Surat Keterangan Pindah, penarikan akun Dapodik, dan pengesahan rapor semester berjalan.',
+    requirements: [
+      'Surat Permohonan Mutasi bermaterai dari Orang Tua / Wali',
+      'Surat Keterangan Diterima dari sekolah tujuan',
+      'Buku Rapor asli lengkap sampai semester terakhir',
+      'Surat Bebas Tanggungan Perpustakaan & Laboratorium',
+    ],
+    samplePurposes: [
+      'Kepindahan domisili tugas orang tua ke luar kota',
+      'Pindah satuan pendidikan antar SMA Negeri di Jawa Timur',
+    ],
+  },
+  {
+    id: 'rekomendasi',
+    code: 'TU-04',
+    title: 'Surat Rekomendasi & Pengantar Lomba',
+    shortTitle: 'Rekomendasi',
+    slaDays: 1,
+    targetAudience: 'Siswa & Pembina',
+    description:
+      'Surat rekomendasi resmi sekolah untuk mengikuti kompetisi akademik/non-akademik, seleksi pertukaran pelajar, atau beasiswa prestasi.',
+    requirements: [
+      'Poster / Surat Undangan resmi penyelenggara kegiatan atau beasiswa',
+      'Persetujuan guru pembina ekstrakurikuler atau wali kelas',
+      'Data lengkap peserta (Nama, Kelas, NISN)',
+    ],
+    samplePurposes: [
+      'Rekomendasi Olimpiade Sains Nasional (OSN) / Lomba Karya Ilmiah',
+      'Rekomendasi Seleksi Paskibraka / Duta Pelajar Kota Surabaya',
+    ],
+  },
+  {
+    id: 'izin-kegiatan',
+    code: 'TU-05',
+    title: 'Surat Izin & Dispensasi Kegiatan',
+    shortTitle: 'Dispensasi',
+    slaDays: 1,
+    targetAudience: 'Siswa & Guru',
+    description:
+      'Penerbitan surat dispensasi pembelajaran bagi siswa maupun izin tugas luar bagi guru/tenaga kependidikan yang mewakili sekolah.',
+    requirements: [
+      'Surat tugas / undangan resmi kegiatan dari panitia atau dinas',
+      'Daftar nama peserta dan pendamping lengkap beserta kelas',
+      'Rentang tanggal dan jam pelaksanaan kegiatan',
+    ],
+    samplePurposes: [
+      'Dispensasi pertandingan DBL / Kejuaraan Provinsi',
+      'Dispensasi pelatihan delegasi OSIS / MPK tingkat kota',
+    ],
+  },
+  {
+    id: 'perbaikan-data',
+    code: 'TU-06',
+    title: 'Perbaikan Data Pokok (Dapodik & NISN)',
+    shortTitle: 'Verval Data',
+    slaDays: 3,
+    targetAudience: 'Siswa & Alumni',
+    description:
+      'Pengajuan verifikasi dan validasi (VervalPD) perbaikan kesalahan penulisan nama, tanggal lahir, NIK, atau nama orang tua pada sistem Dapodik dan NISN.',
+    requirements: [
+      'Fotokopi Akta Kelahiran asli yang jelas terbaca',
+      'Fotokopi Kartu Keluarga (KK) terbaru tervalidasi Dukcapil',
+      'Fotokopi Ijazah jenjang sebelumnya (SMP/MTs)',
+    ],
+    samplePurposes: [
+      'Penyesuaian ejaan nama pada NISN sesuai Akta Kelahiran untuk SNPMB',
+      'Pemutakhiran NIK dan data kependudukan di Dapodik',
+    ],
+  },
+  {
+    id: 'surat-tugas',
+    code: 'TU-07',
+    title: 'Surat Tugas & Administrasi Kepegawaian',
+    shortTitle: 'Kepegawaian',
+    slaDays: 1,
+    targetAudience: 'Guru / Tendik',
+    description:
+      'Layanan penerbitan Surat Tugas kedinasan, SPPD, surat keterangan aktif mengajar, dan pengesahan berkas kepegawaian ASN / PPPK / GTT.',
+    requirements: [
+      'Nota dinas / surat undangan rapat, diklat, atau MGMP dari instansi pengundang',
+      'Data NIP / NUPTK dan golongan/jabatan pemohon',
+      'Jadwal dan lokasi penugasan resmi',
+    ],
+    samplePurposes: [
+      'Surat Tugas Kegiatan MGMP SMA Kota Surabaya',
+      'Surat Keterangan Aktif Mengajar untuk Pemberkasan TPG',
+    ],
+  },
+];
