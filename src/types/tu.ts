@@ -174,3 +174,24 @@ export interface AgendaEntry {
   disposition: string;
   relatedTicketId?: string;
 }
+
+export type KopSuratMode = 'custom' | 'upload-banner';
+
+export type KopDividerStyle = 'double' | 'thick-thin' | 'single';
+
+export interface KopSuratConfig {
+  mode: KopSuratMode;
+  bannerImageDataUrl: string;
+  leftLogoDataUrl: string;
+  rightLogoDataUrl: string;
+  provinceLine: string;
+  departmentLine: string;
+  schoolNameLine: string;
+  addressLine: string;
+  contactLine: string;
+  dividerStyle: KopDividerStyle;
+  cityName: string;
+  principalTitle: string;
+  principalName: string;
+  principalNip: string;
+}

@@ -1,12 +1,15 @@
-import { Printer } from 'lucide-react';
+import { Printer, SlidersHorizontal } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { SCHOOL_INFO } from '../config/schoolConfig';
-import { ServiceRequest, UserMode } from '../types/tu';
+import { KopSuratConfig, ServiceRequest, UserMode } from '../types/tu';
 import { formatTanggalIndonesia, formatTanggalSuratResmi } from '../utils/formatters';
+import { KopSuratSettingsModal } from './KopSuratSettingsModal';
 
 interface DocumentPrintViewProps {
   requests: ServiceRequest[];
   userMode: UserMode;
+  kopSurat: KopSuratConfig;
+  onSaveKopSurat: (nextConfig: KopSuratConfig) => Promise<boolean>;
   selectedRequestId?: string;
   initialDocMode?: 'surat' | 'tanda-terima';
 }
@@ -14,6 +17,8 @@ interface DocumentPrintViewProps {
 export function DocumentPrintView({
   requests,
   userMode,
+  kopSurat,
+  onSaveKopSurat,
   selectedRequestId,
   initialDocMode = 'surat',
 }: DocumentPrintViewProps) {
@@ -24,8 +29,14 @@ export function DocumentPrintView({
   const [docMode, setDocMode] = useState<'surat' | 'tanda-terima'>(
     isPetugas ? initialDocMode : 'tanda-terima'
   );
-  const [principalName, setPrincipalName] = useState('Kepala SMA Negeri 9 Surabaya');
-  const [principalNip, setPrincipalNip] = useState('196905121995121003');
+  const [principalName, setPrincipalName] = useState(kopSurat.principalName);
+  const [principalNip, setPrincipalNip] = useState(kopSurat.principalNip);
+  const [kopModalOpen, setKopModalOpen] = useState(false);
+
+  useEffect(() => {
+    setPrincipalName(kopSurat.principalName);
+    setPrincipalNip(kopSurat.principalNip);
+  }, [kopSurat.principalName, kopSurat.principalNip]);
 
   useEffect(() => {
     if (selectedRequestId) {
@@ -52,6 +63,12 @@ export function DocumentPrintView({
   }
 
   const displayLetterNo = activeReq.letterNumber || '421.3/___/101.6.1.9/2026';
+  const dividerClass =
+    kopSurat.dividerStyle === 'double'
+      ? 'border-b-4 border-double border-slate-900'
+      : kopSurat.dividerStyle === 'thick-thin'
+        ? 'border-b-[3px] border-slate-900'
+        : 'border-b border-slate-900';
 
   return (
     <div className="space-y-6">
@@ -110,53 +127,101 @@ export function DocumentPrintView({
           )}
         </div>
 
-        <button
-          type="button"
-          onClick={handlePrint}
-          className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 text-xs font-semibold text-white hover:bg-blue-800 whitespace-nowrap shrink-0"
-        >
-          <Printer className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <span>Cetak / Simpan PDF</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {isPetugas && (
+            <button
+              type="button"
+              onClick={() => setKopModalOpen(true)}
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 whitespace-nowrap shrink-0"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span>Atur Kop Surat</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handlePrint}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 text-xs font-semibold text-white hover:bg-blue-800 whitespace-nowrap shrink-0"
+          >
+            <Printer className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>Cetak / Simpan PDF</span>
+          </button>
+        </div>
       </div>
 
       {/* Lembar Pratinjau A4 */}
       <div className="print-only-sheet mx-auto max-w-[794px] rounded-xl border border-slate-200 bg-white p-8 text-slate-900 shadow-xs sm:p-12">
         {/* KOP SURAT RESMI */}
-        <header className="border-b-4 border-double border-slate-900 pb-4 text-center">
-          <div className="flex items-center justify-center gap-5">
-            <svg
-              viewBox="0 0 64 64"
-              className="h-16 w-16 shrink-0 text-slate-900"
-              fill="none"
-              aria-hidden="true"
-            >
-              <path
-                d="M32 6L10 14v18c0 14.5 9.4 24.4 22 28 12.6-3.6 22-13.5 22-28V14L32 6z"
-                stroke="currentColor"
-                strokeWidth="2.5"
-              />
-              <path d="M22 27h20M22 34h20M26 20h12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-            </svg>
-            <div>
-              <p className="text-xs font-semibold tracking-wider text-slate-800">
-                {SCHOOL_INFO.province}
-              </p>
-              <p className="text-sm font-bold tracking-wide text-slate-900">
-                {SCHOOL_INFO.department}
-              </p>
-              <h2 className="mt-0.5 text-xl font-bold tracking-tight text-slate-950">
-                {SCHOOL_INFO.name}
-              </h2>
-              <p className="mt-1 text-xs text-slate-700">
-                {SCHOOL_INFO.address}
-              </p>
-              <p className="text-xs text-slate-700">
-                Telp. {SCHOOL_INFO.phone} · Email: {SCHOOL_INFO.email} · Laman: sman9sby.sch.id
-              </p>
+        {kopSurat.mode === 'upload-banner' && kopSurat.bannerImageDataUrl ? (
+          <header className="pb-3 text-center">
+            <img
+              src={kopSurat.bannerImageDataUrl}
+              alt={`Kop Surat ${kopSurat.schoolNameLine || SCHOOL_INFO.name}`}
+              className="mx-auto max-h-40 w-full object-contain"
+            />
+          </header>
+        ) : (
+          <header className={`${dividerClass} pb-4 text-center`}>
+            <div className="flex items-center justify-center gap-5">
+              {kopSurat.leftLogoDataUrl ? (
+                <img
+                  src={kopSurat.leftLogoDataUrl}
+                  alt="Logo instansi kiri"
+                  className="h-16 w-16 shrink-0 object-contain"
+                />
+              ) : (
+                <svg
+                  viewBox="0 0 64 64"
+                  className="h-16 w-16 shrink-0 text-slate-900"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M32 6L10 14v18c0 14.5 9.4 24.4 22 28 12.6-3.6 22-13.5 22-28V14L32 6z"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                  />
+                  <path
+                    d="M22 27h20M22 34h20M26 20h12"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              )}
+
+              <div className="min-w-0 flex-1">
+                {kopSurat.provinceLine && (
+                  <p className="text-xs font-semibold tracking-wider text-slate-800">
+                    {kopSurat.provinceLine}
+                  </p>
+                )}
+                {kopSurat.departmentLine && (
+                  <p className="text-sm font-bold tracking-wide text-slate-900">
+                    {kopSurat.departmentLine}
+                  </p>
+                )}
+                <h2 className="mt-0.5 text-xl font-bold tracking-tight text-slate-950">
+                  {kopSurat.schoolNameLine || SCHOOL_INFO.name}
+                </h2>
+                {kopSurat.addressLine && (
+                  <p className="mt-1 text-xs text-slate-700">{kopSurat.addressLine}</p>
+                )}
+                {kopSurat.contactLine && (
+                  <p className="text-xs text-slate-700">{kopSurat.contactLine}</p>
+                )}
+              </div>
+
+              {kopSurat.rightLogoDataUrl ? (
+                <img
+                  src={kopSurat.rightLogoDataUrl}
+                  alt="Logo instansi kanan"
+                  className="h-16 w-16 shrink-0 object-contain"
+                />
+              ) : null}
             </div>
-          </div>
-        </header>
+          </header>
+        )}
 
         {docMode === 'surat' ? (
           <div className="mt-8 space-y-6 text-sm leading-relaxed text-slate-900">
@@ -220,8 +285,10 @@ export function DocumentPrintView({
 
             <div className="flex justify-end pt-8">
               <div className="w-64 text-sm">
-                <p>Surabaya, {formatTanggalSuratResmi(activeReq.updatedAt)}</p>
-                <p className="mt-0.5 font-medium">Kepala Sekolah,</p>
+                <p>
+                  {kopSurat.cityName || 'Surabaya'}, {formatTanggalSuratResmi(activeReq.updatedAt)}
+                </p>
+                <p className="mt-0.5 font-medium">{kopSurat.principalTitle || 'Kepala Sekolah,'}</p>
                 <div className="h-20" />
                 <p className="font-bold underline underline-offset-2">{principalName}</p>
                 <p className="font-mono text-xs text-slate-700">NIP. {principalNip}</p>
@@ -299,7 +366,9 @@ export function DocumentPrintView({
                 </p>
               </div>
               <div className="w-52 text-center text-slate-900">
-                <p>Surabaya, {formatTanggalSuratResmi(activeReq.createdAt)}</p>
+                <p>
+                  {kopSurat.cityName || 'Surabaya'}, {formatTanggalSuratResmi(activeReq.createdAt)}
+                </p>
                 <p>Petugas Loket TU,</p>
                 <div className="h-14" />
                 <p className="font-semibold">{activeReq.assignedStaff}</p>
@@ -308,6 +377,13 @@ export function DocumentPrintView({
           </div>
         )}
       </div>
+
+      <KopSuratSettingsModal
+        open={kopModalOpen}
+        config={kopSurat}
+        onClose={() => setKopModalOpen(false)}
+        onSave={onSaveKopSurat}
+      />
     </div>
   );
 }

@@ -11,10 +11,11 @@ import { QueueTrackingView } from './components/QueueTrackingView';
 import { RequestDetailDrawer } from './components/RequestDetailDrawer';
 import { Sidebar } from './components/Sidebar';
 import { SubmitRequestView } from './components/SubmitRequestView';
-import { SCHOOL_INFO } from './config/schoolConfig';
+import { DEFAULT_KOP_SURAT_CONFIG, SCHOOL_INFO } from './config/schoolConfig';
 import {
   AgendaEntry,
   DapodikStudent,
+  KopSuratConfig,
   RequestStatus,
   ServiceCategoryId,
   ServiceRequest,
@@ -44,6 +45,7 @@ export default function App() {
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
   const [agendaEntries, setAgendaEntries] = useState<AgendaEntry[]>([]);
   const [students, setStudents] = useState<DapodikStudent[]>([]);
+  const [kopSuratConfig, setKopSuratConfig] = useState<KopSuratConfig>(DEFAULT_KOP_SURAT_CONFIG);
 
   const [selectedServiceId, setSelectedServiceId] = useState<ServiceCategoryId>('surat-aktif');
   const [prefillStudent, setPrefillStudent] = useState<DapodikStudent | null>(null);
@@ -78,6 +80,18 @@ export default function App() {
       }
     } catch {
       // Ignore transient network failure
+    }
+  }, []);
+
+  const loadKopSurat = useCallback(async () => {
+    try {
+      const res = await fetch('/api/kop-surat');
+      if (res.ok) {
+        const data = (await res.json()) as KopSuratConfig;
+        setKopSuratConfig(data);
+      }
+    } catch {
+      // Fallback to default config
     }
   }, []);
 
@@ -125,7 +139,8 @@ export default function App() {
   useEffect(() => {
     void refreshAuthStatus(null);
     void loadPublicRequests();
-  }, [loadPublicRequests, refreshAuthStatus]);
+    void loadKopSurat();
+  }, [loadKopSurat, loadPublicRequests, refreshAuthStatus]);
 
   useEffect(() => {
     if (!toastMessage) return;
@@ -440,6 +455,39 @@ export default function App() {
     }
   };
 
+  const handleSaveKopSurat = async (nextConfig: KopSuratConfig): Promise<boolean> => {
+    if (!sessionToken) {
+      void requestPetugasAccess('cetak');
+      return false;
+    }
+    try {
+      const res = await fetch('/api/kop-surat', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify(nextConfig),
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir. Silakan verifikasi token kembali.');
+        return false;
+      }
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+        setToastMessage(errBody?.error || 'Gagal menyimpan konfigurasi Kop Surat.');
+        return false;
+      }
+      const saved = (await res.json()) as KopSuratConfig;
+      setKopSuratConfig(saved);
+      setToastMessage('Konfigurasi Kop Surat sekolah berhasil disimpan.');
+      return true;
+    } catch {
+      setToastMessage('Terjadi kesalahan koneksi saat menyimpan Kop Surat.');
+      return false;
+    }
+  };
+
   const targetLabelMap: Record<WorkspaceTab, string> = {
     beranda: 'Beranda Loket',
     ajukan: 'Ajukan Permohonan',
@@ -599,6 +647,8 @@ export default function App() {
             <DocumentPrintView
               requests={requests}
               userMode={userMode}
+              kopSurat={kopSuratConfig}
+              onSaveKopSurat={handleSaveKopSurat}
               selectedRequestId={printTargetId}
               initialDocMode={printDocMode}
             />

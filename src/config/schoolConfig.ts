@@ -1,4 +1,4 @@
-import { ServiceCatalogItem } from '../types/tu';
+import { KopSuratConfig, ServiceCatalogItem } from '../types/tu';
 
 export const SCHOOL_INFO = {
   province: 'PEMERINTAH PROVINSI JAWA TIMUR',
@@ -15,6 +15,23 @@ export const SCHOOL_INFO = {
   staffAvatar: '/src/assets/images/tu_staff_avatar_1795598580710.jpg',
   staffName: 'Sulistyowati, S.Pd.',
   staffRole: 'Koordinator Pelayanan Tata Usaha',
+};
+
+export const DEFAULT_KOP_SURAT_CONFIG: KopSuratConfig = {
+  mode: 'custom',
+  bannerImageDataUrl: '',
+  leftLogoDataUrl: '',
+  rightLogoDataUrl: '',
+  provinceLine: SCHOOL_INFO.province,
+  departmentLine: SCHOOL_INFO.department,
+  schoolNameLine: SCHOOL_INFO.name,
+  addressLine: SCHOOL_INFO.address,
+  contactLine: `Telp. ${SCHOOL_INFO.phone} · Email: ${SCHOOL_INFO.email} · Laman: sman9sby.sch.id`,
+  dividerStyle: 'double',
+  cityName: 'Surabaya',
+  principalTitle: 'Kepala Sekolah,',
+  principalName: 'Kepala SMA Negeri 9 Surabaya',
+  principalNip: '196905121995121003',
 };
 
 export const TU_SERVICE_CATALOG: ServiceCatalogItem[] = [

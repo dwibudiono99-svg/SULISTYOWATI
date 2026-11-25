@@ -3,13 +3,37 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
-import type { AgendaEntry, DapodikStudent, ServiceRequest } from './src/types/tu.ts';
+import type {
+  AgendaEntry,
+  DapodikStudent,
+  KopDividerStyle,
+  KopSuratConfig,
+  KopSuratMode,
+  ServiceRequest,
+} from './src/types/tu.ts';
 
 const PORT = 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const STORE_PATH = path.resolve(DATA_DIR, 'tu_store.json');
+
+const DEFAULT_KOP_SURAT: KopSuratConfig = {
+  mode: 'custom',
+  bannerImageDataUrl: '',
+  leftLogoDataUrl: '',
+  rightLogoDataUrl: '',
+  provinceLine: 'PEMERINTAH PROVINSI JAWA TIMUR',
+  departmentLine: 'DINAS PENDIDIKAN',
+  schoolNameLine: 'SMA NEGERI 9 SURABAYA',
+  addressLine: 'Jl. Wijaya Kusuma No. 48, Ketabang, Kec. Genteng, Kota Surabaya, Jawa Timur 60272',
+  contactLine: 'Telp. (031) 5342608 · Email: smanixsurabaya@gmail.com · Laman: sman9sby.sch.id',
+  dividerStyle: 'double',
+  cityName: 'Surabaya',
+  principalTitle: 'Kepala Sekolah,',
+  principalName: 'Kepala SMA Negeri 9 Surabaya',
+  principalNip: '196905121995121003',
+};
 
 interface ClaimedTokenRecord {
   salt: string;
@@ -19,6 +43,7 @@ interface ClaimedTokenRecord {
 
 interface ServerStore {
   claimedToken: ClaimedTokenRecord | null;
+  kopSurat: KopSuratConfig;
   students: DapodikStudent[];
   requests: ServiceRequest[];
   agenda: AgendaEntry[];
@@ -883,11 +908,83 @@ function loadInitialSeeds(): Pick<ServerStore, 'students' | 'requests' | 'agenda
   };
 }
 
+function isSafeRasterImageDataUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  if (value === '') return true;
+  if (value.length > 2_800_000) return false;
+  return /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value);
+}
+
+function sanitizeKopSurat(
+  input: unknown,
+  fallback: KopSuratConfig = DEFAULT_KOP_SURAT
+): { config: KopSuratConfig; error?: string } {
+  if (!input || typeof input !== 'object') {
+    return { config: fallback, error: 'Payload konfigurasi Kop Surat tidak valid.' };
+  }
+  const raw = input as Partial<KopSuratConfig>;
+  const mode: KopSuratMode = raw.mode === 'upload-banner' ? 'upload-banner' : 'custom';
+  const dividerStyle: KopDividerStyle =
+    raw.dividerStyle === 'thick-thin' || raw.dividerStyle === 'single'
+      ? raw.dividerStyle
+      : 'double';
+
+  const bannerImageDataUrl =
+    typeof raw.bannerImageDataUrl === 'string' ? raw.bannerImageDataUrl : '';
+  const leftLogoDataUrl =
+    typeof raw.leftLogoDataUrl === 'string' ? raw.leftLogoDataUrl : '';
+  const rightLogoDataUrl =
+    typeof raw.rightLogoDataUrl === 'string' ? raw.rightLogoDataUrl : '';
+
+  if (
+    !isSafeRasterImageDataUrl(bannerImageDataUrl) ||
+    !isSafeRasterImageDataUrl(leftLogoDataUrl) ||
+    !isSafeRasterImageDataUrl(rightLogoDataUrl)
+  ) {
+    return {
+      config: fallback,
+      error: 'Format gambar tidak didukung atau melebihi 2 MB. Gunakan file PNG, JPG, atau WEBP.',
+    };
+  }
+
+  if (mode === 'upload-banner' && !bannerImageDataUrl) {
+    return {
+      config: fallback,
+      error: 'Silakan unggah berkas gambar Kop Surat terlebih dahulu untuk mode Upload Berkas.',
+    };
+  }
+
+  const cleanText = (val: unknown, defaultVal: string, maxLen = 200): string => {
+    if (typeof val !== 'string') return defaultVal;
+    return val.trim().slice(0, maxLen);
+  };
+
+  return {
+    config: {
+      mode,
+      bannerImageDataUrl,
+      leftLogoDataUrl,
+      rightLogoDataUrl,
+      provinceLine: cleanText(raw.provinceLine, fallback.provinceLine, 120),
+      departmentLine: cleanText(raw.departmentLine, fallback.departmentLine, 120),
+      schoolNameLine: cleanText(raw.schoolNameLine, fallback.schoolNameLine, 120),
+      addressLine: cleanText(raw.addressLine, fallback.addressLine, 220),
+      contactLine: cleanText(raw.contactLine, fallback.contactLine, 220),
+      dividerStyle,
+      cityName: cleanText(raw.cityName, fallback.cityName, 80) || 'Surabaya',
+      principalTitle: cleanText(raw.principalTitle, fallback.principalTitle, 100) || 'Kepala Sekolah,',
+      principalName: cleanText(raw.principalName, fallback.principalName, 120) || fallback.principalName,
+      principalNip: cleanText(raw.principalNip, fallback.principalNip, 40),
+    },
+  };
+}
+
 function readStore(): ServerStore {
   if (!fs.existsSync(STORE_PATH)) {
     const seeds = loadInitialSeeds();
     const initial: ServerStore = {
       claimedToken: null,
+      kopSurat: DEFAULT_KOP_SURAT,
       students: seeds.students,
       requests: seeds.requests,
       agenda: seeds.agenda,
@@ -899,8 +996,12 @@ function readStore(): ServerStore {
     const raw = fs.readFileSync(STORE_PATH, 'utf8');
     const parsed = JSON.parse(raw) as Partial<ServerStore>;
     const seeds = loadInitialSeeds();
+    const kopResult = parsed.kopSurat
+      ? sanitizeKopSurat(parsed.kopSurat, DEFAULT_KOP_SURAT)
+      : { config: DEFAULT_KOP_SURAT };
     return {
       claimedToken: parsed.claimedToken ?? null,
+      kopSurat: kopResult.config,
       students: Array.isArray(parsed.students) ? parsed.students : seeds.students,
       requests: Array.isArray(parsed.requests) ? parsed.requests : seeds.requests,
       agenda: Array.isArray(parsed.agenda) ? parsed.agenda : seeds.agenda,
@@ -909,6 +1010,7 @@ function readStore(): ServerStore {
     const seeds = loadInitialSeeds();
     return {
       claimedToken: null,
+      kopSurat: DEFAULT_KOP_SURAT,
       students: seeds.students,
       requests: seeds.requests,
       agenda: seeds.agenda,
@@ -1018,7 +1120,7 @@ function requirePetugasAuth(req: Request, res: Response, next: NextFunction): vo
 
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '5mb' }));
+  app.use(express.json({ limit: '10mb' }));
 
   // Auth status
   app.get('/api/tu-auth/status', (req: Request, res: Response) => {
@@ -1444,6 +1546,24 @@ async function startServer() {
     store.agenda = store.agenda.filter((item) => item.id !== id);
     writeStore(store);
     res.json({ ok: true });
+  });
+
+  // Kop Surat Config Routes (GET public for printed receipts/letters; PUT protected)
+  app.get('/api/kop-surat', (_req: Request, res: Response) => {
+    const store = readStore();
+    res.json(store.kopSurat);
+  });
+
+  app.put('/api/kop-surat', requirePetugasAuth, (req: Request, res: Response) => {
+    const { config, error } = sanitizeKopSurat(req.body, DEFAULT_KOP_SURAT);
+    if (error) {
+      res.status(400).json({ error });
+      return;
+    }
+    const store = readStore();
+    store.kopSurat = config;
+    writeStore(store);
+    res.json(store.kopSurat);
   });
 
   // Vite dev middleware or production static assets
