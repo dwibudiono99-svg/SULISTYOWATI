@@ -1,0 +1,6 @@
+{
+  "name": "SIP TU SMAN 9 Surabaya",
+  "description": "Sistem Informasi Pelayanan Tata Usaha SMA Negeri 9 Surabaya untuk pengajuan surat, pelacakan permohonan, agenda surat masuk-keluar, dan pencetakan dokumen resmi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
