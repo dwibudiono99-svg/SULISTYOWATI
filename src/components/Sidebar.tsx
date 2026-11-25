@@ -8,11 +8,14 @@ import {
   Lock,
   LogOut,
   Printer,
+  School,
   ShieldCheck,
+  ToggleLeft,
+  Users,
   X,
 } from 'lucide-react';
 import { SCHOOL_INFO } from '../config/schoolConfig';
-import { UserMode, WorkspaceTab } from '../types/tu';
+import { ReportingPortalConfig, UserMode, WorkspaceTab } from '../types/tu';
 
 interface SidebarProps {
   activeTab: WorkspaceTab;
@@ -21,9 +24,13 @@ interface SidebarProps {
   onRequestPetugasAccess: (targetTab?: WorkspaceTab) => void;
   onLogoutPetugas: () => void;
   onOpenChangeToken: () => void;
+  onOpenReportingControl: () => void;
+  reportingPortal: ReportingPortalConfig;
   canChangeToken: boolean;
   pendingCount: number;
   studentCount: number;
+  gtkCount: number;
+  rombelCount: number;
   mobileOpen: boolean;
   onCloseMobile: () => void;
 }
@@ -36,14 +43,18 @@ const PEMOHON_NAV: { id: WorkspaceTab; label: string; icon: typeof LayoutDashboa
 ];
 
 const PROTECTED_SHORTCUTS: { id: WorkspaceTab; label: string; icon: typeof Database }[] = [
-  { id: 'dapodik', label: 'Database Dapodik', icon: Database },
+  { id: 'dapodik', label: 'Database Siswa Dapodik', icon: Database },
+  { id: 'gtk', label: 'Database GTK Dapodik', icon: Users },
+  { id: 'rombel', label: 'Setting Rombel & Wali', icon: School },
   { id: 'agenda', label: 'Agenda Surat TU', icon: BookOpenCheck },
 ];
 
 const PETUGAS_NAV: { id: WorkspaceTab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'beranda', label: 'Beranda Loket', icon: LayoutDashboard },
   { id: 'antrean', label: 'Kelola Antrean', icon: ListChecks },
-  { id: 'dapodik', label: 'Database Dapodik', icon: Database },
+  { id: 'dapodik', label: 'Database Siswa Dapodik', icon: Database },
+  { id: 'gtk', label: 'Database GTK Dapodik', icon: Users },
+  { id: 'rombel', label: 'Setting Rombel & Wali', icon: School },
   { id: 'agenda', label: 'Agenda Surat TU', icon: BookOpenCheck },
   { id: 'ajukan', label: 'Buat Permohonan', icon: FilePlus2 },
   { id: 'cetak', label: 'Cetak Dokumen', icon: Printer },
@@ -56,9 +67,13 @@ export function Sidebar({
   onRequestPetugasAccess,
   onLogoutPetugas,
   onOpenChangeToken,
+  onOpenReportingControl,
+  reportingPortal,
   canChangeToken,
   pendingCount,
   studentCount,
+  gtkCount,
+  rombelCount,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
@@ -171,6 +186,24 @@ export function Sidebar({
                       {studentCount}
                     </span>
                   )}
+                  {isPetugas && item.id === 'gtk' && gtkCount > 0 && (
+                    <span
+                      className={`font-mono text-xs tabular-nums ${
+                        isActive ? 'text-blue-100' : 'text-slate-400'
+                      }`}
+                    >
+                      {gtkCount}
+                    </span>
+                  )}
+                  {isPetugas && item.id === 'rombel' && rombelCount > 0 && (
+                    <span
+                      className={`font-mono text-xs tabular-nums ${
+                        isActive ? 'text-blue-100' : 'text-slate-400'
+                      }`}
+                    >
+                      {rombelCount}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -234,6 +267,24 @@ export function Sidebar({
             </div>
 
             <div className="flex flex-col gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  onCloseMobile();
+                  onOpenReportingControl();
+                }}
+                className={`inline-flex w-full items-center justify-between rounded-lg border px-3 py-2 text-xs font-medium whitespace-nowrap ${
+                  reportingPortal.isOpen
+                    ? 'border-emerald-700/60 bg-emerald-950/50 text-emerald-300 hover:bg-emerald-950'
+                    : 'border-rose-700/60 bg-rose-950/60 text-rose-200 hover:bg-rose-950'
+                }`}
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <ToggleLeft className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span>{reportingPortal.isOpen ? 'Pelaporan: Dibuka' : 'Pelaporan: Ditutup'}</span>
+                </span>
+                <span className="text-[10px] underline">Atur</span>
+              </button>
               {canChangeToken && (
                 <button
                   type="button"

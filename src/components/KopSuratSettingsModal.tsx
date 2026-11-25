@@ -1,4 +1,4 @@
-import { AlertCircle, ImagePlus, RotateCcw, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
+import { AlertCircle, Eye, EyeOff, ImagePlus, RotateCcw, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from 'react';
 import { DEFAULT_KOP_SURAT_CONFIG } from '../config/schoolConfig';
 import { KopDividerStyle, KopSuratConfig, KopSuratMode } from '../types/tu';
@@ -157,6 +157,44 @@ export function KopSuratSettingsModal({
 
         {/* Body Modal */}
         <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
+          {/* Toggle Tampilkan / Sembunyikan Kop Surat */}
+          <div className="flex flex-col justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3.5 sm:flex-row sm:items-center">
+            <div>
+              <p className="text-xs font-semibold text-slate-900">
+                Tampilan Kop Surat saat Cetak Dokumen
+              </p>
+              <p className="mt-0.5 text-[11px] text-slate-600">
+                Sembunyikan Kop Surat apabila Anda mencetak langsung di atas kertas ber-kop fisik sekolah.
+              </p>
+            </div>
+            <div className="inline-flex shrink-0 rounded-lg border border-slate-300 bg-white p-0.5">
+              <button
+                type="button"
+                onClick={() => setDraft((prev) => ({ ...prev, showKopSurat: true }))}
+                className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                  draft.showKopSurat
+                    ? 'bg-blue-700 text-white'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>Tampilkan Kop</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setDraft((prev) => ({ ...prev, showKopSurat: false }))}
+                className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                  !draft.showKopSurat
+                    ? 'bg-slate-900 text-white'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>Sembunyikan</span>
+              </button>
+            </div>
+          </div>
+
           {/* Switcher Mode */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <button
@@ -226,7 +264,16 @@ export function KopSuratSettingsModal({
               Pratinjau Kop Surat pada Lembar A4
             </p>
             <div className="rounded-md border border-slate-200 bg-white px-5 py-4 text-slate-900">
-              {draft.mode === 'upload-banner' ? (
+              {!draft.showKopSurat ? (
+                <div className="flex h-20 flex-col items-center justify-center rounded border border-dashed border-slate-300 bg-slate-50 px-4 text-center">
+                  <p className="text-xs font-semibold text-slate-700">
+                    Kop Surat Disembunyikan
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-slate-500">
+                    Dokumen akan dicetak tanpa Kop Surat digital (ruang atas disiapkan untuk kertas kop fisik).
+                  </p>
+                </div>
+              ) : draft.mode === 'upload-banner' ? (
                 draft.bannerImageDataUrl ? (
                   <img
                     src={draft.bannerImageDataUrl}

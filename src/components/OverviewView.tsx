@@ -1,24 +1,31 @@
-import { ArrowRight, Check, Clock, Copy, ExternalLink, FileText, Globe, MapPin, Phone, Search } from 'lucide-react';
+import { ArrowRight, Check, Clock, Copy, ExternalLink, FileText, Globe, LockOpen, MapPin, Phone, Search, ShieldAlert, ToggleLeft } from 'lucide-react';
 import { FormEvent, useState } from 'react';
 import { SCHOOL_INFO, TU_SERVICE_CATALOG } from '../config/schoolConfig';
-import { ServiceCategoryId, ServiceRequest } from '../types/tu';
+import { ReportingPortalConfig, ServiceCategoryId, ServiceRequest, UserMode } from '../types/tu';
 import { formatTanggalIndonesia } from '../utils/formatters';
+import { MonthlyRequestsChart } from './MonthlyRequestsChart';
 import { StatusIndicator } from './StatusIndicator';
 
 interface OverviewViewProps {
   requests: ServiceRequest[];
+  userMode: UserMode;
+  reportingPortal: ReportingPortalConfig;
   onStartRequest: (serviceId: ServiceCategoryId) => void;
   onSelectRequest: (req: ServiceRequest) => void;
   onNavigateQueue: (initialQuery?: string) => void;
   onTrackExact?: (query: string) => Promise<ServiceRequest | null>;
+  onOpenReportingControl?: () => void;
 }
 
 export function OverviewView({
   requests,
+  userMode,
+  reportingPortal,
   onStartRequest,
   onSelectRequest,
   onNavigateQueue,
   onTrackExact,
+  onOpenReportingControl,
 }: OverviewViewProps) {
   const [trackingQuery, setTrackingQuery] = useState('');
   const [lookupError, setLookupError] = useState('');
@@ -98,6 +105,66 @@ export function OverviewView({
 
   return (
     <div className="space-y-8">
+      {/* Status Sistem Buka / Tutup Pelaporan */}
+      {userMode === 'petugas' && onOpenReportingControl ? (
+        <section
+          aria-label="Kontrol Buka Tutup Pelaporan TU"
+          className={`flex flex-col justify-between gap-3 rounded-xl border p-4 sm:flex-row sm:items-center ${
+            reportingPortal.isOpen
+              ? 'border-emerald-200 bg-emerald-50/70'
+              : 'border-rose-200 bg-rose-50/80'
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            {reportingPortal.isOpen ? (
+              <LockOpen className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" aria-hidden="true" />
+            ) : (
+              <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-rose-700" aria-hidden="true" />
+            )}
+            <div>
+              <p className="text-sm font-semibold text-slate-900">
+                {reportingPortal.isOpen
+                  ? 'Sistem Pelaporan & Permohonan Publik: DIBUKA'
+                  : 'Sistem Pelaporan & Permohonan Publik: DITUTUP SEMENTARA'}
+              </p>
+              <p className="mt-0.5 text-xs text-slate-700">
+                {reportingPortal.isOpen
+                  ? 'Siswa, alumni, dan pemohon dapat mengirim permohonan surat baru secara daring.'
+                  : reportingPortal.closedMessage}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenReportingControl}
+            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg bg-slate-900 px-3.5 text-xs font-semibold text-white hover:bg-slate-800 whitespace-nowrap"
+          >
+            <ToggleLeft className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>{reportingPortal.isOpen ? 'Tutup Pelaporan' : 'Buka Pelaporan'}</span>
+          </button>
+        </section>
+      ) : (
+        !reportingPortal.isOpen && (
+          <section
+            role="status"
+            className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950"
+          >
+            <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden="true" />
+            <div>
+              <p className="text-sm font-semibold">
+                Loket Pengajuan Permohonan Daring Sedang Ditutup Sementara
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-amber-900">
+                {reportingPortal.closedMessage}
+              </p>
+              <p className="mt-1.5 text-xs font-medium text-amber-900">
+                Anda tetap dapat melacak status tiket atau mencetak Tanda Terima melalui kolom pencarian di bawah ini.
+              </p>
+            </div>
+          </section>
+        )
+      )}
+
       {/* Banner Identitas Sekolah & Lacak Tiket */}
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
         <div className="grid grid-cols-1 items-stretch lg:grid-cols-12">
@@ -164,7 +231,7 @@ export function OverviewView({
                         setTrackingQuery(e.target.value);
                         if (lookupError) setLookupError('');
                       }}
-                      placeholder="Contoh: TU-2026-0148 atau 0094821735"
+                      placeholder="Contoh: TU-2026-0001 atau NISN / NIP"
                       className="h-10 w-full rounded-lg border border-slate-300 bg-white pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none"
                     />
                   </div>
@@ -282,6 +349,9 @@ export function OverviewView({
         </div>
       </section>
 
+      {/* Grafik Bulanan Permohonan Surat Masuk */}
+      <MonthlyRequestsChart requests={requests} />
+
       {/* Katalog Layanan Tata Usaha */}
       <section>
         <div className="mb-4 flex items-end justify-between gap-4">
@@ -324,9 +394,17 @@ export function OverviewView({
                 <button
                   type="button"
                   onClick={() => onStartRequest(service.id)}
-                  className="inline-flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-800 transition-colors hover:border-blue-600 hover:bg-blue-50 hover:text-blue-700 whitespace-nowrap"
+                  className={`inline-flex w-full items-center justify-between rounded-lg border px-3.5 py-2 text-xs font-semibold transition-colors whitespace-nowrap ${
+                    !reportingPortal.isOpen && userMode !== 'petugas'
+                      ? 'border-slate-200 bg-slate-100 text-slate-500 hover:bg-slate-200'
+                      : 'border-slate-200 bg-slate-50 text-slate-800 hover:border-blue-600 hover:bg-blue-50 hover:text-blue-700'
+                  }`}
                 >
-                  <span>Ajukan {service.shortTitle}</span>
+                  <span>
+                    {!reportingPortal.isOpen && userMode !== 'petugas'
+                      ? 'Pelaporan Ditutup Sementara'
+                      : `Ajukan ${service.shortTitle}`}
+                  </span>
                   <ArrowRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 </button>
               </div>
@@ -362,35 +440,43 @@ export function OverviewView({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {recentRequests.map((req) => (
-                <tr
-                  key={req.id}
-                  onClick={() => onSelectRequest(req)}
-                  className="cursor-pointer transition-colors hover:bg-slate-50"
-                >
-                  <td className="px-4 py-3 font-mono text-xs font-semibold tabular-nums text-blue-700">
-                    {req.id}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-slate-900">{req.applicantName}</div>
-                    <div className="text-xs text-slate-500">
-                      {req.applicantRole} · {req.classOrCohort}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-slate-700">
-                    <div className="flex items-center gap-1.5">
-                      <FileText className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
-                      <span className="truncate max-w-[240px]">{req.serviceTitle}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusIndicator status={req.status} />
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono text-xs tabular-nums text-slate-500">
-                    {formatTanggalIndonesia(req.updatedAt)}
+              {recentRequests.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-4 py-10 text-center text-sm text-slate-500">
+                    Belum ada permohonan surat yang masuk. Pengajuan baru dari siswa, guru, atau alumni akan tampil di sini.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                recentRequests.map((req) => (
+                  <tr
+                    key={req.id}
+                    onClick={() => onSelectRequest(req)}
+                    className="cursor-pointer transition-colors hover:bg-slate-50"
+                  >
+                    <td className="px-4 py-3 font-mono text-xs font-semibold tabular-nums text-blue-700">
+                      {req.id}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-900">{req.applicantName}</div>
+                      <div className="text-xs text-slate-500">
+                        {req.applicantRole} · {req.classOrCohort}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">
+                      <div className="flex items-center gap-1.5">
+                        <FileText className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+                        <span className="truncate max-w-[240px]">{req.serviceTitle}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusIndicator status={req.status} />
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono text-xs tabular-nums text-slate-500">
+                      {formatTanggalIndonesia(req.updatedAt)}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

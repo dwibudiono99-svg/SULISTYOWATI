@@ -1,4 +1,4 @@
-import { KopSuratConfig, ServiceCatalogItem } from '../types/tu';
+import { KopSuratConfig, ReportingPortalConfig, ServiceCatalogItem } from '../types/tu';
 
 export const SCHOOL_INFO = {
   province: 'PEMERINTAH PROVINSI JAWA TIMUR',
@@ -20,6 +20,7 @@ export const SCHOOL_INFO = {
 };
 
 export const DEFAULT_KOP_SURAT_CONFIG: KopSuratConfig = {
+  showKopSurat: true,
   mode: 'custom',
   bannerImageDataUrl: '',
   leftLogoDataUrl: '/assets/logo-jatim-sman9.png',
@@ -33,8 +34,16 @@ export const DEFAULT_KOP_SURAT_CONFIG: KopSuratConfig = {
   dividerStyle: 'thick-thin',
   cityName: 'Surabaya',
   principalTitle: 'Kepala Sekolah,',
-  principalName: 'Kepala SMA Negeri 9 Surabaya',
-  principalNip: '196905121995121003',
+  principalName: 'TRI KURNIAWATI, S.Pd., M.M., M.Pd.',
+  principalNip: '197203251997032003',
+};
+
+export const DEFAULT_REPORTING_PORTAL_CONFIG: ReportingPortalConfig = {
+  isOpen: true,
+  closedMessage:
+    'Pelayanan pengajuan permohonan Tata Usaha secara daring sedang ditutup sementara (di luar jam kerja loket atau pemeliharaan berkas). Silakan pantau tiket berjalan atau ajukan kembali saat loket dibuka.',
+  updatedAt: '2026-11-25T07:00:00+07:00',
+  updatedBy: 'Sulistyowati, S.Pd.',
 };
 
 export const TU_SERVICE_CATALOG: ServiceCatalogItem[] = [

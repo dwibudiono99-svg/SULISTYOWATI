@@ -1,16 +1,28 @@
-import { CheckSquare, ClipboardList, Database, Send, Square } from 'lucide-react';
+import { CheckSquare, ClipboardList, Database, Send, ShieldAlert, Square, Users } from 'lucide-react';
 import { FormEvent, useEffect, useState } from 'react';
 import { SCHOOL_INFO, TU_SERVICE_CATALOG } from '../config/schoolConfig';
-import { ApplicantRole, DapodikStudent, ServiceCategoryId, ServiceRequest, UserMode } from '../types/tu';
+import {
+  ApplicantRole,
+  DapodikGtk,
+  DapodikStudent,
+  ReportingPortalConfig,
+  ServiceCategoryId,
+  ServiceRequest,
+  UserMode,
+} from '../types/tu';
 import { generateTicketCode } from '../utils/formatters';
 
 interface SubmitRequestViewProps {
   initialServiceId: ServiceCategoryId;
   existingCount: number;
   userMode: UserMode;
+  reportingPortal: ReportingPortalConfig;
   students: DapodikStudent[];
+  gtkList?: DapodikGtk[];
   prefillStudent?: DapodikStudent | null;
+  prefillGtk?: DapodikGtk | null;
   onSubmitNewRequest: (request: ServiceRequest) => void;
+  onNavigateQueue?: () => void;
 }
 
 const ROLES: ApplicantRole[] = ['Siswa', 'Alumni', 'Guru / Tendik', 'Orang Tua / Wali'];
@@ -19,9 +31,13 @@ export function SubmitRequestView({
   initialServiceId,
   existingCount,
   userMode,
+  reportingPortal,
   students,
+  gtkList = [],
   prefillStudent,
+  prefillGtk,
   onSubmitNewRequest,
+  onNavigateQueue,
 }: SubmitRequestViewProps) {
   const [serviceId, setServiceId] = useState<ServiceCategoryId>(initialServiceId);
   const [applicantRole, setApplicantRole] = useState<ApplicantRole>('Siswa');
@@ -34,6 +50,7 @@ export function SubmitRequestView({
   const [checkedReqs, setCheckedReqs] = useState<string[]>([]);
   const [formError, setFormError] = useState('');
   const [selectedDapodikId, setSelectedDapodikId] = useState('');
+  const [selectedGtkId, setSelectedGtkId] = useState('');
 
   useEffect(() => {
     setServiceId(initialServiceId);
@@ -41,6 +58,7 @@ export function SubmitRequestView({
 
   const applyDapodikStudent = (student: DapodikStudent) => {
     setSelectedDapodikId(student.id);
+    setSelectedGtkId('');
     setApplicantRole(student.statusSiswa === 'Lulus' ? 'Alumni' : 'Siswa');
     setApplicantName(student.nama);
     setIdentityNumber(student.nisn || student.nipd);
@@ -48,11 +66,27 @@ export function SubmitRequestView({
     setPhone(student.hp);
   };
 
+  const applyDapodikGtk = (gtk: DapodikGtk) => {
+    setSelectedGtkId(gtk.id);
+    setSelectedDapodikId('');
+    setApplicantRole('Guru / Tendik');
+    setApplicantName(gtk.nama);
+    setIdentityNumber(gtk.nip || gtk.nuptk || gtk.nik);
+    setClassOrCohort(gtk.tugasTambahan || gtk.jenisPtk);
+    setPhone(gtk.hp);
+  };
+
   useEffect(() => {
     if (prefillStudent) {
       applyDapodikStudent(prefillStudent);
     }
   }, [prefillStudent]);
+
+  useEffect(() => {
+    if (prefillGtk) {
+      applyDapodikGtk(prefillGtk);
+    }
+  }, [prefillGtk]);
 
   const selectedService =
     TU_SERVICE_CATALOG.find((s) => s.id === serviceId) ?? TU_SERVICE_CATALOG[0];
@@ -117,9 +151,36 @@ export function SubmitRequestView({
     setNotes('');
     setCheckedReqs([]);
     setSelectedDapodikId('');
+    setSelectedGtkId('');
 
     onSubmitNewRequest(newRequest);
   };
+
+  if (!reportingPortal.isOpen && userMode !== 'petugas') {
+    return (
+      <div className="mx-auto max-w-2xl rounded-xl border border-amber-300 bg-white p-8 text-center">
+        <ShieldAlert className="mx-auto h-10 w-10 text-amber-600" aria-hidden="true" />
+        <h2 className="mt-3 text-lg font-semibold text-slate-900">
+          Pelaporan / Pengajuan Layanan Sedang Ditutup
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed text-slate-600">
+          {reportingPortal.closedMessage}
+        </p>
+        <p className="mt-3 text-xs text-slate-500">
+          Jam Layanan Loket TU: {SCHOOL_INFO.serviceHours}
+        </p>
+        {onNavigateQueue && (
+          <button
+            type="button"
+            onClick={onNavigateQueue}
+            className="mt-5 inline-flex items-center rounded-lg bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white hover:bg-slate-800"
+          >
+            Lacak Tiket & Antrean Berjalan
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
@@ -127,6 +188,15 @@ export function SubmitRequestView({
         onSubmit={handleSubmit}
         className="space-y-6 rounded-xl border border-slate-200 bg-white p-6 lg:col-span-8"
       >
+        {!reportingPortal.isOpen && userMode === 'petugas' && (
+          <div className="flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
+            <span>
+              <strong>Pelaporan Publik Ditutup:</strong> Pemohon tidak dapat mengirim formulir daring. Formulir ini tetap dibuka khusus untuk input loket oleh Petugas TU.
+            </span>
+          </div>
+        )}
+
         <div className="border-b border-slate-100 pb-4">
           <h2 className="text-lg font-semibold text-slate-900">
             Formulir Permohonan Pelayanan Tata Usaha
@@ -136,30 +206,60 @@ export function SubmitRequestView({
           </p>
         </div>
 
-        {/* Ambil Cepat dari Database Dapodik (Hanya Mode Petugas TU terautentikasi) */}
-        {userMode === 'petugas' && students.length > 0 && (
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-            <div className="flex items-center gap-2 text-xs font-semibold text-slate-800">
-              <Database className="h-3.5 w-3.5 text-blue-700" aria-hidden="true" />
-              <span>Isi Otomatis dari Database Siswa Dapodik (Mode Petugas TU)</span>
-            </div>
-            <select
-              value={selectedDapodikId}
-              onChange={(e) => {
-                const found = students.find((s) => s.id === e.target.value);
-                if (found) applyDapodikStudent(found);
-                else setSelectedDapodikId('');
-              }}
-              aria-label="Pilih siswa dari database Dapodik"
-              className="mt-2 h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900"
-            >
-              <option value="">-- Pilih siswa/alumni dari Database Dapodik --</option>
-              {students.map((st) => (
-                <option key={st.id} value={st.id}>
-                  {st.nama} · NISN {st.nisn} ({st.rombelSaatIni})
-                </option>
-              ))}
-            </select>
+        {/* Ambil Cepat dari Database Dapodik Siswa / GTK (Hanya Mode Petugas TU terautentikasi) */}
+        {userMode === 'petugas' && (students.length > 0 || gtkList.length > 0) && (
+          <div className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3.5 sm:grid-cols-2">
+            {students.length > 0 && (
+              <div>
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                  <Database className="h-3.5 w-3.5 text-blue-700" aria-hidden="true" />
+                  <span>Isi dari Database Siswa Dapodik</span>
+                </div>
+                <select
+                  value={selectedDapodikId}
+                  onChange={(e) => {
+                    const found = students.find((s) => s.id === e.target.value);
+                    if (found) applyDapodikStudent(found);
+                    else setSelectedDapodikId('');
+                  }}
+                  aria-label="Pilih siswa dari database Dapodik"
+                  className="mt-1.5 h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900"
+                >
+                  <option value="">-- Pilih siswa/alumni --</option>
+                  {students.map((st) => (
+                    <option key={st.id} value={st.id}>
+                      {st.nama} · NISN {st.nisn} ({st.rombelSaatIni})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {gtkList.length > 0 && (
+              <div>
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                  <Users className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                  <span>Isi dari Database GTK Dapodik</span>
+                </div>
+                <select
+                  value={selectedGtkId}
+                  onChange={(e) => {
+                    const found = gtkList.find((g) => g.id === e.target.value);
+                    if (found) applyDapodikGtk(found);
+                    else setSelectedGtkId('');
+                  }}
+                  aria-label="Pilih GTK dari database Dapodik"
+                  className="mt-1.5 h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900"
+                >
+                  <option value="">-- Pilih Guru / Tendik --</option>
+                  {gtkList.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.nama.toUpperCase()} ({(g.jabatanPtk || g.jenisPtk).toUpperCase()})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
         )}
 

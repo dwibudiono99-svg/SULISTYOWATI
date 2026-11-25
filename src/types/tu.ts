@@ -22,7 +22,15 @@ export type AgendaType = 'Surat Masuk' | 'Surat Keluar';
 
 export type LetterClassification = 'Biasa' | 'Penting' | 'Segera';
 
-export type WorkspaceTab = 'beranda' | 'ajukan' | 'antrean' | 'dapodik' | 'agenda' | 'cetak';
+export type WorkspaceTab =
+  | 'beranda'
+  | 'ajukan'
+  | 'antrean'
+  | 'dapodik'
+  | 'gtk'
+  | 'rombel'
+  | 'agenda'
+  | 'cetak';
 
 export type UserMode = 'pemohon' | 'petugas';
 
@@ -180,6 +188,7 @@ export type KopSuratMode = 'custom' | 'upload-banner';
 export type KopDividerStyle = 'double' | 'thick-thin' | 'single';
 
 export interface KopSuratConfig {
+  showKopSurat: boolean;
   mode: KopSuratMode;
   bannerImageDataUrl: string;
   leftLogoDataUrl: string;
@@ -195,4 +204,90 @@ export interface KopSuratConfig {
   principalTitle: string;
   principalName: string;
   principalNip: string;
+}
+
+export interface ReportingPortalConfig {
+  isOpen: boolean;
+  closedMessage: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export type DukcapilMatchStatus = 'Padan Dispendukcapil' | 'Residu Data' | 'Tidak Padan NIK';
+
+export interface DapodikGtk {
+  id: string;
+  nama: string;
+  nuptk: string;
+  jk: StudentGender;
+  tempatLahir: string;
+  tanggalLahir: string;
+  nip: string;
+  statusKepegawaian:
+    | 'PNS'
+    | 'PPPK'
+    | 'PPPK Paruh Waktu'
+    | 'CPNS'
+    | 'GTY/PTY'
+    | 'Guru Honor Sekolah'
+    | 'Tenaga Honor Sekolah';
+  jenisPtk:
+    | 'Guru'
+    | 'Guru Mapel'
+    | 'Guru BK'
+    | 'Kepala Sekolah'
+    | 'Tenaga Kependidikan'
+    | 'Tenaga Administrasi Sekolah'
+    | 'Pustakawan'
+    | 'Laboran'
+    | 'Penjaga Sekolah';
+  agama: 'Islam' | 'Kristen' | 'Katolik' | 'Hindu' | 'Buddha' | 'Konghucu';
+  alamatJalan: string;
+  rt: string;
+  rw: string;
+  kelurahan: string;
+  kecamatan: string;
+  kodePos: string;
+  hp: string;
+  email: string;
+  tugasTambahan: string;
+  statusTugas: 'Induk' | 'Non-Induk';
+  skPengangkatan: string;
+  tmtPengangkatan: string;
+  pangkatGolongan: string;
+  nik: string;
+  noKk: string;
+  namaIbuKandung: string;
+  npwp: string;
+  fotoDataUrl?: string;
+  gelarDepan?: string;
+  gelarBelakang?: string;
+  jenjang?: string;
+  jurusanProdi?: string;
+  sertifikasi?: string;
+  tmtKerja?: string;
+  mengajar?: string;
+  jamTugasTambahan?: string;
+  jjm?: string;
+  totalJjm?: string;
+  jumlahSiswa?: string;
+  kompetensi?: string;
+  jabatanPtk?: string;
+  dukcapilStatus: DukcapilMatchStatus;
+  dukcapilNotes: string;
+  dukcapilCheckedAt: string;
+}
+
+export interface DapodikRombel {
+  id: string;
+  namaRombel: string;
+  tingkatKelas: '10' | '11' | '12';
+  jumlahL: number;
+  jumlahP: number;
+  jumlahTotal: number;
+  waliKelasId?: string;
+  waliKelasNama: string;
+  kurikulum: string;
+  ruangan: string;
+  updatedAt?: string;
 }

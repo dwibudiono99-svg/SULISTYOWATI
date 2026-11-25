@@ -1,4 +1,4 @@
-import { Plus, Search, Trash2, X } from 'lucide-react';
+import { Plus, Printer, Search, Trash2, X } from 'lucide-react';
 import { FormEvent, useMemo, useState } from 'react';
 import { AgendaEntry, AgendaType, LetterClassification, UserMode } from '../types/tu';
 import { formatTanggalIndonesia } from '../utils/formatters';
@@ -8,6 +8,7 @@ interface AgendaSuratViewProps {
   userMode: UserMode;
   onAddEntry: (entry: AgendaEntry) => void;
   onDeleteEntry: (id: string) => void;
+  onOpenReportPrint?: () => void;
 }
 
 export function AgendaSuratView({
@@ -15,6 +16,7 @@ export function AgendaSuratView({
   userMode,
   onAddEntry,
   onDeleteEntry,
+  onOpenReportPrint,
 }: AgendaSuratViewProps) {
   const [typeFilter, setTypeFilter] = useState<'ALL' | AgendaType>('ALL');
   const [query, setQuery] = useState('');
@@ -110,14 +112,26 @@ export function AgendaSuratView({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setModalOpen(true)}
-          className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white hover:bg-slate-800 whitespace-nowrap shrink-0"
-        >
-          <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span>Catat Agenda Surat</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {onOpenReportPrint && (
+            <button
+              type="button"
+              onClick={onOpenReportPrint}
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 whitespace-nowrap shrink-0"
+            >
+              <Printer className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span>Cetak Laporan</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setModalOpen(true)}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white hover:bg-slate-800 whitespace-nowrap shrink-0"
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span>Catat Agenda Surat</span>
+          </button>
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
@@ -186,7 +200,7 @@ export function AgendaSuratView({
       </div>
 
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="no-print fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
             className="fixed inset-0 bg-slate-950/50"
             onClick={() => setModalOpen(false)}

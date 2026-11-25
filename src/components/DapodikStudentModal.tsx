@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import {
+  DapodikRombel,
   DapodikStudent,
   ServiceCategoryId,
   StudentGender,
@@ -22,6 +23,7 @@ interface DapodikStudentModalProps {
   student: DapodikStudent | null;
   isCreating: boolean;
   userMode: UserMode;
+  rombels?: DapodikRombel[];
   onClose: () => void;
   onSave: (student: DapodikStudent, isNew: boolean) => void;
   onDelete: (id: string) => void;
@@ -135,6 +137,7 @@ export function DapodikStudentModal({
   student,
   isCreating,
   userMode,
+  rombels = [],
   onClose,
   onSave,
   onDelete,
@@ -883,12 +886,22 @@ export function DapodikStudentModal({
                 </label>
                 <input
                   type="text"
+                  list="sman9-active-rombels"
                   disabled={!canEdit}
                   value={form.rombelSaatIni}
                   onChange={(e) => updateField('rombelSaatIni', e.target.value)}
-                  placeholder="Contoh: XI-F3"
+                  placeholder="Contoh: X-1 atau XI-A1"
                   className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-3 text-sm disabled:bg-slate-50"
                 />
+                {rombels.length > 0 && (
+                  <datalist id="sman9-active-rombels">
+                    {rombels.map((r) => (
+                      <option key={r.id} value={r.namaRombel}>
+                        {r.namaRombel} — Wali: {r.waliKelasNama}
+                      </option>
+                    ))}
+                  </datalist>
+                )}
               </div>
 
               <div>

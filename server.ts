@@ -5,12 +5,19 @@ import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import type {
   AgendaEntry,
+  DapodikGtk,
+  DapodikRombel,
   DapodikStudent,
   KopDividerStyle,
   KopSuratConfig,
   KopSuratMode,
+  ReportingPortalConfig,
   ServiceRequest,
 } from './src/types/tu.ts';
+import { buildSman9PtkSeeds } from './src/data/sman9GtkSeeds.ts';
+import { buildSman9RombelSeeds } from './src/data/sman9RombelSeeds.ts';
+import { applyDispendukcapilCheck } from './src/utils/gtkDapodikValidation.ts';
+import { normalizeRombelRecord, sortRombelsNaturally } from './src/utils/rombelDapodikUtils.ts';
 
 const PORT = 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
@@ -19,6 +26,7 @@ const DATA_DIR = path.resolve(process.cwd(), 'data');
 const STORE_PATH = path.resolve(DATA_DIR, 'tu_store.json');
 
 const DEFAULT_KOP_SURAT: KopSuratConfig = {
+  showKopSurat: true,
   mode: 'custom',
   bannerImageDataUrl: '',
   leftLogoDataUrl: '/assets/logo-jatim-sman9.png',
@@ -32,8 +40,16 @@ const DEFAULT_KOP_SURAT: KopSuratConfig = {
   dividerStyle: 'thick-thin',
   cityName: 'Surabaya',
   principalTitle: 'Kepala Sekolah,',
-  principalName: 'Kepala SMA Negeri 9 Surabaya',
-  principalNip: '196905121995121003',
+  principalName: 'TRI KURNIAWATI, S.Pd., M.M., M.Pd.',
+  principalNip: '197203251997032003',
+};
+
+const DEFAULT_REPORTING_PORTAL: ReportingPortalConfig = {
+  isOpen: true,
+  closedMessage:
+    'Pelayanan pengajuan permohonan Tata Usaha secara daring sedang ditutup sementara (di luar jam kerja loket atau pemeliharaan berkas). Silakan pantau tiket berjalan atau ajukan kembali saat loket dibuka.',
+  updatedAt: '2026-11-25T07:00:00+07:00',
+  updatedBy: 'Sulistyowati, S.Pd.',
 };
 
 interface ClaimedTokenRecord {
@@ -45,7 +61,10 @@ interface ClaimedTokenRecord {
 interface ServerStore {
   claimedToken: ClaimedTokenRecord | null;
   kopSurat: KopSuratConfig;
+  reportingPortal: ReportingPortalConfig;
   students: DapodikStudent[];
+  gtkList: DapodikGtk[];
+  rombels: DapodikRombel[];
   requests: ServiceRequest[];
   agenda: AgendaEntry[];
 }
@@ -59,854 +78,45 @@ interface SessionPayload {
 
 const revokedSessionIds = new Set<string>();
 
+const LEGACY_DUMMY_STUDENT_IDS = new Set([
+  'pd-001',
+  'pd-002',
+  'pd-003',
+  'pd-004',
+  'pd-005',
+  'pd-006',
+  'pd-007',
+  'pd-imp-1795640655987-8',
+  'pd-imp-1795640655986-7',
+  'pd-imp-1795640655986-6',
+]);
+const LEGACY_DUMMY_STUDENT_NISNS = new Set(['0081234567', '0081923412', '0072819231']);
+function isLegacyDummyStudent(s: Partial<DapodikStudent> | null | undefined): boolean {
+  if (!s) return true;
+  if (typeof s.id === 'string' && LEGACY_DUMMY_STUDENT_IDS.has(s.id)) return true;
+  if (typeof s.nisn === 'string' && LEGACY_DUMMY_STUDENT_NISNS.has(s.nisn.trim())) return true;
+  return false;
+}
+const LEGACY_DUMMY_REQUEST_IDS = new Set([
+  'TU-2026-0148',
+  'TU-2026-0149',
+  'TU-2026-0150',
+  'TU-2026-0151',
+  'TU-2026-0152',
+  'TU-2026-0141',
+]);
+const LEGACY_DUMMY_AGENDA_IDS = new Set(['ag-1', 'ag-2', 'ag-3', 'ag-4', 'ag-5']);
+
 function loadInitialSeeds(): Pick<ServerStore, 'students' | 'requests' | 'agenda'> {
   return {
-    students: [
-      {
-        id: 'pd-001',
-        nama: 'Nadia Kusuma Wardhani',
-        nipd: '252610114',
-        jk: 'P',
-        nisn: '0094821735',
-        tempatLahir: 'Surabaya',
-        tanggalLahir: '2009-08-14',
-        nik: '3578065408090002',
-        noKk: '3578061204150019',
-        noAktaLahir: '3578-LU-18082009-0041',
-        agama: 'Islam',
-        kewarganegaraan: 'WNI',
-        berkebutuhanKhusus: 'Tidak Ada',
-        anakKeBerapa: 1,
-        alamatJalan: 'Jl. Ketabang Kali No. 22',
-        rt: '003',
-        rw: '005',
-        dusun: '',
-        kelurahan: 'Ketabang',
-        kecamatan: 'Kec. Genteng',
-        kodePos: '60272',
-        lintang: '-7,2529',
-        bujur: '112,7435',
-        jenisTinggal: 'Bersama Orang Tua',
-        alatTransportasi: 'Sepeda Motor',
-        telepon: '',
-        hp: '0812-3490-8812',
-        email: 'nadia.wardhani09@sma.belajar.id',
-        tinggiBadanCm: 161,
-        beratBadanKg: 51,
-        lingkarKepalaCm: 54,
-        jarakSekolahKm: 1.4,
-        waktuTempuhMenit: 10,
-        jumlahSaudaraKandung: 1,
-        penerimaKps: false,
-        noKps: '',
-        penerimaKip: false,
-        noKip: '',
-        namaDiKip: '',
-        nomorKks: '',
-        layakPip: false,
-        alasanLayakPip: '',
-        bank: '',
-        nomorRekeningBank: '',
-        rekeningAtasNama: '',
-        namaAyah: 'Hendra Kusuma Wijaya',
-        nikAyah: '3578061403780005',
-        tahunLahirAyah: '1978',
-        pendidikanAyah: 'S1',
-        pekerjaanAyah: 'Karyawan Swasta',
-        penghasilanAyah: 'Rp 5.000.000 - Rp 20.000.000',
-        namaIbu: 'Sri Rahayu Ningsih',
-        nikIbu: '3578064809810003',
-        tahunLahirIbu: '1981',
-        pendidikanIbu: 'S1',
-        pekerjaanIbu: 'PNS/TNI/Polri',
-        penghasilanIbu: 'Rp 5.000.000 - Rp 20.000.000',
-        namaWali: '',
-        tahunLahirWali: '',
-        pendidikanWali: '',
-        pekerjaanWali: '',
-        penghasilanWali: '',
-        nikWali: '',
-        rombelSaatIni: 'XI-F3',
-        tingkatKelas: 'XI',
-        kurikulum: 'Kurikulum Merdeka',
-        jenisPendaftaran: 'Siswa Baru',
-        tanggalMasuk: '2025-07-14',
-        asalSmp: 'SMP Negeri 1 Surabaya',
-        skhun: '',
-        noPesertaUn: '',
-        noSeriIjazahSmp: 'DN-05/D-SMP/K13/25/0419283',
-        statusSiswa: 'Aktif',
-        vervalPdSyncAt: '2026-11-20T09:30:00+07:00',
-      },
-      {
-        id: 'pd-002',
-        nama: 'Muhammad Farhan Al-Rasyid',
-        nipd: '242510089',
-        jk: 'L',
-        nisn: '0087712409',
-        tempatLahir: 'Surabaya',
-        tanggalLahir: '2008-03-21',
-        nik: '3578092103080004',
-        noKk: '3578091502100044',
-        noAktaLahir: '3578-LU-02042008-0118',
-        agama: 'Islam',
-        kewarganegaraan: 'WNI',
-        berkebutuhanKhusus: 'Tidak Ada',
-        anakKeBerapa: 2,
-        alamatJalan: 'Jl. Dharmawangsa Dalam Selatan No. 14',
-        rt: '002',
-        rw: '004',
-        dusun: '',
-        kelurahan: 'Airlangga',
-        kecamatan: 'Kec. Gubeng',
-        kodePos: '60286',
-        lintang: '-7,2724',
-        bujur: '112,7540',
-        jenisTinggal: 'Bersama Orang Tua',
-        alatTransportasi: 'Sepeda Motor',
-        telepon: '',
-        hp: '0821-4098-1173',
-        email: 'farhan.rasyid08@sma.belajar.id',
-        tinggiBadanCm: 173,
-        beratBadanKg: 64,
-        lingkarKepalaCm: 56,
-        jarakSekolahKm: 3.2,
-        waktuTempuhMenit: 15,
-        jumlahSaudaraKandung: 2,
-        penerimaKps: false,
-        noKps: '',
-        penerimaKip: false,
-        noKip: '',
-        namaDiKip: '',
-        nomorKks: '',
-        layakPip: false,
-        alasanLayakPip: '',
-        bank: '',
-        nomorRekeningBank: '',
-        rekeningAtasNama: '',
-        namaAyah: 'Ahmad Fauzi Al-Rasyid',
-        nikAyah: '3578091105750008',
-        tahunLahirAyah: '1975',
-        pendidikanAyah: 'S2',
-        pekerjaanAyah: 'Wiraswasta',
-        penghasilanAyah: 'Rp 5.000.000 - Rp 20.000.000',
-        namaIbu: 'Nurul Hidayati',
-        nikIbu: '',
-        tahunLahirIbu: '1979',
-        pendidikanIbu: 'S1',
-        pekerjaanIbu: 'Tidak Bekerja',
-        penghasilanIbu: 'Tidak Berpenghasilan',
-        namaWali: '',
-        tahunLahirWali: '',
-        pendidikanWali: '',
-        pekerjaanWali: '',
-        penghasilanWali: '',
-        nikWali: '',
-        rombelSaatIni: 'XII-MIPA 2',
-        tingkatKelas: 'XII',
-        kurikulum: 'Kurikulum Merdeka',
-        jenisPendaftaran: 'Siswa Baru',
-        tanggalMasuk: '2024-07-15',
-        asalSmp: 'SMP Negeri 6 Surabaya',
-        skhun: '',
-        noPesertaUn: '',
-        noSeriIjazahSmp: '',
-        statusSiswa: 'Aktif',
-        vervalPdSyncAt: '2026-11-24T09:15:00+07:00',
-      },
-      {
-        id: 'pd-003',
-        nama: 'Clarissa Putri Maharani',
-        nipd: '262710042',
-        jk: 'P',
-        nisn: '0098123456',
-        tempatLahir: 'Sidoarjo',
-        tanggalLahir: '2010-05-09',
-        nik: '3578084905100001',
-        noKk: '3578082208120007',
-        noAktaLahir: '3515-LU-20052010-0092',
-        agama: 'Kristen',
-        kewarganegaraan: 'WNI',
-        berkebutuhanKhusus: 'Tidak Ada',
-        anakKeBerapa: 1,
-        alamatJalan: 'Jl. Ambengan Selatan Blok B No. 9',
-        rt: '004',
-        rw: '002',
-        dusun: '',
-        kelurahan: 'Pacar Keling',
-        kecamatan: 'Kec. Tambaksari',
-        kodePos: '60131',
-        lintang: '-7,2513',
-        bujur: '112,7509',
-        jenisTinggal: 'Bersama Orang Tua',
-        alatTransportasi: 'Mobil Pribadi',
-        telepon: '',
-        hp: '0819-0334-7821',
-        email: 'clarissa.maharani10@sma.belajar.id',
-        tinggiBadanCm: 159,
-        beratBadanKg: 48,
-        lingkarKepalaCm: 53,
-        jarakSekolahKm: 2.1,
-        waktuTempuhMenit: 12,
-        jumlahSaudaraKandung: 1,
-        penerimaKps: false,
-        noKps: '',
-        penerimaKip: false,
-        noKip: '',
-        namaDiKip: '',
-        nomorKks: '',
-        layakPip: false,
-        alasanLayakPip: '',
-        bank: '',
-        nomorRekeningBank: '',
-        rekeningAtasNama: '',
-        namaAyah: 'Daniel Hartono',
-        nikAyah: '3578080907790002',
-        tahunLahirAyah: '1979',
-        pendidikanAyah: 'S1',
-        pekerjaanAyah: 'Wiraswasta',
-        penghasilanAyah: 'Rp 5.000.000 - Rp 20.000.000',
-        namaIbu: 'Yuliana Sari',
-        nikIbu: '3578085211820001',
-        tahunLahirIbu: '1982',
-        pendidikanIbu: 'S1',
-        pekerjaanIbu: 'Karyawan Swasta',
-        penghasilanIbu: 'Rp 2.000.000 - Rp 4.999.999',
-        namaWali: '',
-        tahunLahirWali: '',
-        pendidikanWali: '',
-        pekerjaanWali: '',
-        penghasilanWali: '',
-        nikWali: '',
-        rombelSaatIni: 'X-E5',
-        tingkatKelas: 'X',
-        kurikulum: 'Kurikulum Merdeka',
-        jenisPendaftaran: 'Siswa Baru',
-        tanggalMasuk: '2026-07-13',
-        asalSmp: 'SMPK Santa Agnes Surabaya',
-        skhun: '',
-        noPesertaUn: '',
-        noSeriIjazahSmp: 'DN-05/D-SMP/KM/26/0193842',
-        statusSiswa: 'Aktif',
-        vervalPdSyncAt: '2026-11-18T11:00:00+07:00',
-      },
-      {
-        id: 'pd-004',
-        nama: 'Dimas Arya Pratama',
-        nipd: '262710018',
-        jk: 'L',
-        nisn: '0102938475',
-        tempatLahir: 'Surabaya',
-        tanggalLahir: '2010-01-17',
-        nik: '3578041701100003',
-        noKk: '3578041103110028',
-        noAktaLahir: '3578-LU-25012010-0015',
-        agama: 'Islam',
-        kewarganegaraan: 'WNI',
-        berkebutuhanKhusus: 'Tidak Ada',
-        anakKeBerapa: 2,
-        alamatJalan: 'Jl. Ngaglik No. 41',
-        rt: '001',
-        rw: '003',
-        dusun: '',
-        kelurahan: 'Kapasari',
-        kecamatan: 'Kec. Genteng',
-        kodePos: '60273',
-        lintang: '-7,2415',
-        bujur: '112,7513',
-        jenisTinggal: 'Bersama Orang Tua',
-        alatTransportasi: 'Jalan Kaki',
-        telepon: '',
-        hp: '0857-3109-4420',
-        email: 'dimas.pratama10@sma.belajar.id',
-        tinggiBadanCm: 168,
-        beratBadanKg: 58,
-        lingkarKepalaCm: 54,
-        jarakSekolahKm: 0.9,
-        waktuTempuhMenit: 10,
-        jumlahSaudaraKandung: 2,
-        penerimaKps: true,
-        noKps: 'KPS-3578-01182',
-        penerimaKip: true,
-        noKip: 'KIP-3578-009412',
-        namaDiKip: 'DIMAS ARYA PRATAMA',
-        nomorKks: 'KKS-3578-4410',
-        layakPip: true,
-        alasanLayakPip: 'Siswa Miskin/Rentan Miskin',
-        bank: 'BRI',
-        nomorRekeningBank: '0096-01-045821-50-2',
-        rekeningAtasNama: 'DIMAS ARYA PRATAMA',
-        namaAyah: 'Slamet Riyadi',
-        nikAyah: '3578040504760006',
-        tahunLahirAyah: '1976',
-        pendidikanAyah: 'SMA / Sederajat',
-        pekerjaanAyah: 'Pedagang Kecil',
-        penghasilanAyah: 'Rp 1.000.000 - Rp 1.999.999',
-        namaIbu: 'Mardiyanti',
-        nikIbu: '3578044408800004',
-        tahunLahirIbu: '1980',
-        pendidikanIbu: 'SMP / Sederajat',
-        pekerjaanIbu: 'Tidak Bekerja',
-        penghasilanIbu: 'Tidak Berpenghasilan',
-        namaWali: '',
-        tahunLahirWali: '',
-        pendidikanWali: '',
-        pekerjaanWali: '',
-        penghasilanWali: '',
-        nikWali: '',
-        rombelSaatIni: 'X-E1',
-        tingkatKelas: 'X',
-        kurikulum: 'Kurikulum Merdeka',
-        jenisPendaftaran: 'Siswa Baru',
-        tanggalMasuk: '2026-07-13',
-        asalSmp: 'SMP Negeri 3 Surabaya',
-        skhun: '',
-        noPesertaUn: '',
-        noSeriIjazahSmp: 'DN-05/D-SMP/KM/26/0084719',
-        statusSiswa: 'Aktif',
-        vervalPdSyncAt: '2026-11-22T14:20:00+07:00',
-      },
-      {
-        id: 'pd-005',
-        nama: 'Salsabila Azzahra Putri',
-        nipd: '252610067',
-        jk: 'P',
-        nisn: '0091128834',
-        tempatLahir: 'Gresik',
-        tanggalLahir: '2009-11-03',
-        nik: '357810431109',
-        noKk: '3578100901140033',
-        noAktaLahir: '',
-        agama: 'Islam',
-        kewarganegaraan: 'WNI',
-        berkebutuhanKhusus: 'Tidak Ada',
-        anakKeBerapa: 3,
-        alamatJalan: 'Jl. Karah Indah Blok G No. 12',
-        rt: '005',
-        rw: '006',
-        dusun: '',
-        kelurahan: 'Karah',
-        kecamatan: 'Kec. Jambangan',
-        kodePos: '60232',
-        lintang: '-7,3152',
-        bujur: '112,7148',
-        jenisTinggal: 'Bersama Orang Tua',
-        alatTransportasi: 'Angkutan Umum',
-        telepon: '',
-        hp: '0813-5772-9910',
-        email: '',
-        tinggiBadanCm: 157,
-        beratBadanKg: 47,
-        lingkarKepalaCm: 52,
-        jarakSekolahKm: 8.5,
-        waktuTempuhMenit: 35,
-        jumlahSaudaraKandung: 2,
-        penerimaKps: false,
-        noKps: '',
-        penerimaKip: false,
-        noKip: '',
-        namaDiKip: '',
-        nomorKks: '',
-        layakPip: false,
-        alasanLayakPip: '',
-        bank: '',
-        nomorRekeningBank: '',
-        rekeningAtasNama: '',
-        namaAyah: 'Budi Santoso',
-        nikAyah: '3578101002740001',
-        tahunLahirAyah: '1974',
-        pendidikanAyah: 'D3',
-        pekerjaanAyah: 'Karyawan Swasta',
-        penghasilanAyah: 'Rp 2.000.000 - Rp 4.999.999',
-        namaIbu: 'Endang Sulistyowati',
-        nikIbu: '3578104206770002',
-        tahunLahirIbu: '1977',
-        pendidikanIbu: 'SMA / Sederajat',
-        pekerjaanIbu: 'Wirausaha',
-        penghasilanIbu: 'Rp 1.000.000 - Rp 1.999.999',
-        namaWali: '',
-        tahunLahirWali: '',
-        pendidikanWali: '',
-        pekerjaanWali: '',
-        penghasilanWali: '',
-        nikWali: '',
-        rombelSaatIni: 'XI-F1',
-        tingkatKelas: 'XI',
-        kurikulum: 'Kurikulum Merdeka',
-        jenisPendaftaran: 'Pindahan',
-        tanggalMasuk: '2026-01-05',
-        asalSmp: 'SMP Negeri 1 Gresik',
-        skhun: '',
-        noPesertaUn: '',
-        noSeriIjazahSmp: 'DN-05/D-SMP/K13/25/0221904',
-        statusSiswa: 'Aktif',
-        vervalPdSyncAt: '2026-11-19T10:15:00+07:00',
-      },
-      {
-        id: 'pd-006',
-        nama: 'Kevin Wijaya Kusuma',
-        nipd: '242510152',
-        jk: 'L',
-        nisn: '0086543210',
-        tempatLahir: 'Surabaya',
-        tanggalLahir: '2008-06-28',
-        nik: '3578072806080005',
-        noKk: '3578070309110014',
-        noAktaLahir: '3578-LU-10072008-0083',
-        agama: 'Katolik',
-        kewarganegaraan: 'WNI',
-        berkebutuhanKhusus: 'Tidak Ada',
-        anakKeBerapa: 1,
-        alamatJalan: 'Jl. Kusuma Bangsa No. 78',
-        rt: '002',
-        rw: '001',
-        dusun: '',
-        kelurahan: 'Kapasari',
-        kecamatan: 'Kec. Genteng',
-        kodePos: '60273',
-        lintang: '-7,2488',
-        bujur: '112,7505',
-        jenisTinggal: 'Bersama Orang Tua',
-        alatTransportasi: 'Sepeda Motor',
-        telepon: '',
-        hp: '0812-1778-9022',
-        email: 'kevin.wijaya08@sma.belajar.id',
-        tinggiBadanCm: 178,
-        beratBadanKg: 69,
-        lingkarKepalaCm: 57,
-        jarakSekolahKm: 1.1,
-        waktuTempuhMenit: 6,
-        jumlahSaudaraKandung: 1,
-        penerimaKps: false,
-        noKps: '',
-        penerimaKip: false,
-        noKip: '',
-        namaDiKip: '',
-        nomorKks: '',
-        layakPip: false,
-        alasanLayakPip: '',
-        bank: '',
-        nomorRekeningBank: '',
-        rekeningAtasNama: '',
-        namaAyah: 'Antonius Wijaya',
-        nikAyah: '3578071204770003',
-        tahunLahirAyah: '1977',
-        pendidikanAyah: 'S1',
-        pekerjaanAyah: 'Wiraswasta',
-        penghasilanAyah: 'Rp 5.000.000 - Rp 20.000.000',
-        namaIbu: 'Maria Magdalena',
-        nikIbu: '3578074509800002',
-        tahunLahirIbu: '1980',
-        pendidikanIbu: 'S1',
-        pekerjaanIbu: 'Karyawan Swasta',
-        penghasilanIbu: 'Rp 5.000.000 - Rp 20.000.000',
-        namaWali: '',
-        tahunLahirWali: '',
-        pendidikanWali: '',
-        pekerjaanWali: '',
-        penghasilanWali: '',
-        nikWali: '',
-        rombelSaatIni: 'XII-IPS 1',
-        tingkatKelas: 'XII',
-        kurikulum: 'Kurikulum Merdeka',
-        jenisPendaftaran: 'Siswa Baru',
-        tanggalMasuk: '2024-07-15',
-        asalSmp: 'SMP Katolik Angelus Custos',
-        skhun: '',
-        noPesertaUn: '',
-        noSeriIjazahSmp: 'DN-05/D-SMP/K13/24/0512901',
-        statusSiswa: 'Aktif',
-        vervalPdSyncAt: '2026-11-21T08:40:00+07:00',
-      },
-      {
-        id: 'pd-007',
-        nama: 'Bagas Prakoso Putra',
-        nipd: '212210093',
-        jk: 'L',
-        nisn: '0051193842',
-        tempatLahir: 'Surabaya',
-        tanggalLahir: '2006-09-12',
-        nik: '3578061209060007',
-        noKk: '3578060405090011',
-        noAktaLahir: '3578-LU-20092006-0054',
-        agama: 'Islam',
-        kewarganegaraan: 'WNI',
-        berkebutuhanKhusus: 'Tidak Ada',
-        anakKeBerapa: 2,
-        alamatJalan: 'Jl. Jagalan Gang VI No. 5',
-        rt: '006',
-        rw: '004',
-        dusun: '',
-        kelurahan: 'Peneleh',
-        kecamatan: 'Kec. Genteng',
-        kodePos: '60274',
-        lintang: '-7,2521',
-        bujur: '112,7422',
-        jenisTinggal: 'Bersama Orang Tua',
-        alatTransportasi: 'Sepeda Motor',
-        telepon: '',
-        hp: '0856-4812-2290',
-        email: 'bagas.prakoso06@alumni.sman9sby.sch.id',
-        tinggiBadanCm: 172,
-        beratBadanKg: 65,
-        lingkarKepalaCm: 55,
-        jarakSekolahKm: 1.8,
-        waktuTempuhMenit: 10,
-        jumlahSaudaraKandung: 2,
-        penerimaKps: false,
-        noKps: '',
-        penerimaKip: false,
-        noKip: '',
-        namaDiKip: '',
-        nomorKks: '',
-        layakPip: false,
-        alasanLayakPip: '',
-        bank: '',
-        nomorRekeningBank: '',
-        rekeningAtasNama: '',
-        namaAyah: 'Sukarno Putra',
-        nikAyah: '3578061802710004',
-        tahunLahirAyah: '1971',
-        pendidikanAyah: 'SMA / Sederajat',
-        pekerjaanAyah: 'Pensiunan',
-        penghasilanAyah: 'Rp 2.000.000 - Rp 4.999.999',
-        namaIbu: 'Rukmini Wati',
-        nikIbu: '3578065110740002',
-        tahunLahirIbu: '1974',
-        pendidikanIbu: 'SMA / Sederajat',
-        pekerjaanIbu: 'Tidak Bekerja',
-        penghasilanIbu: 'Tidak Berpenghasilan',
-        namaWali: '',
-        tahunLahirWali: '',
-        pendidikanWali: '',
-        pekerjaanWali: '',
-        penghasilanWali: '',
-        nikWali: '',
-        rombelSaatIni: 'Alumni Angkatan 2024',
-        tingkatKelas: 'Alumni',
-        kurikulum: 'Kurikulum 2013',
-        jenisPendaftaran: 'Siswa Baru',
-        tanggalMasuk: '2021-07-12',
-        asalSmp: 'SMP Negeri 2 Surabaya',
-        skhun: '',
-        noPesertaUn: '',
-        noSeriIjazahSmp: 'DN-05/D-SMP/K13/21/0118342',
-        statusSiswa: 'Lulus',
-        vervalPdSyncAt: '2024-06-15T10:00:00+07:00',
-      },
-    ],
-    requests: [
-      {
-        id: 'TU-2026-0148',
-        serviceId: 'surat-aktif',
-        serviceTitle: 'Surat Keterangan Siswa Aktif',
-        applicantName: 'Nadia Kusuma Wardhani',
-        applicantRole: 'Siswa',
-        identityNumber: '0094821735',
-        classOrCohort: 'XI-F3',
-        phone: '0812-3490-8812',
-        purpose: 'Pengajuan Beasiswa Prestasi Pemerintah Kota Surabaya Tahun 2026',
-        notes: 'Mohon mencantumkan keterangan peringkat paralel semester genap apabila memungkinkan.',
-        submittedRequirements: [
-          'Kartu Pelajar / Bukti Identitas Siswa (NIS & NISN)',
-          'Catatan nama instansi atau tujuan surat yang jelas',
-        ],
-        status: 'Siap Diambil',
-        letterNumber: '421.3/118/101.6.1.9/2026',
-        assignedStaff: 'Sulistyowati, S.Pd.',
-        createdAt: '2026-11-23T08:15:00+07:00',
-        updatedAt: '2026-11-24T13:40:00+07:00',
-        estimatedReadyAt: '2026-11-24T14:00:00+07:00',
-        timeline: [
-          {
-            id: 'tl-1',
-            timestamp: '2026-11-23T08:15:00+07:00',
-            status: 'Diajukan',
-            actor: 'Nadia Kusuma Wardhani',
-            note: 'Permohonan diajukan melalui portal SIP TU SMAN 9 Surabaya.',
-          },
-          {
-            id: 'tl-2',
-            timestamp: '2026-11-23T09:20:00+07:00',
-            status: 'Verifikasi Berkas',
-            actor: 'Sulistyowati, S.Pd.',
-            note: 'Data NISN dan status keaktifan di Dapodik telah diverifikasi.',
-          },
-          {
-            id: 'tl-3',
-            timestamp: '2026-11-23T11:05:00+07:00',
-            status: 'Menunggu TTD Kepala Sekolah',
-            actor: 'Bagian Persuratan TU',
-            note: 'Surat bernomor 421.3/118/101.6.1.9/2026 diajukan ke meja Kepala Sekolah.',
-          },
-          {
-            id: 'tl-4',
-            timestamp: '2026-11-24T13:40:00+07:00',
-            status: 'Siap Diambil',
-            actor: 'Sulistyowati, S.Pd.',
-            note: 'Dokumen telah ditandatangani & distempel basah. Dapat diambil di Loket 1 Tata Usaha.',
-          },
-        ],
-      },
-      {
-        id: 'TU-2026-0149',
-        serviceId: 'legalisir',
-        serviceTitle: 'Legalisir Ijazah, SKL & Rapor',
-        applicantName: 'Bagas Prakoso Putra',
-        applicantRole: 'Alumni',
-        identityNumber: '0051193842',
-        classOrCohort: 'Alumni Angkatan 2024',
-        phone: '0856-4812-2290',
-        purpose: 'Legalisir Ijazah & Transkrip Nilai (8 lembar) untuk Seleksi Rekrutmen BUMN',
-        notes: 'Fotokopi sudah disiapkan 8 lembar, akan membawa ijazah asli ke loket pagi ini.',
-        submittedRequirements: [
-          'Dokumen asli (Ijazah / SKL / Rapor) ditunjukkan saat verifikasi loket',
-          'Fotokopi dokumen rapi sesuai jumlah lembar yang dilegalisir (maks. 10 lembar)',
-          'Identitas pemohon (KTP / Kartu Pelajar)',
-        ],
-        status: 'Menunggu TTD Kepala Sekolah',
-        letterNumber: '421.3/121/101.6.1.9/2026',
-        assignedStaff: 'Hendra Wijaya, A.Md.',
-        createdAt: '2026-11-24T08:50:00+07:00',
-        updatedAt: '2026-11-24T15:10:00+07:00',
-        estimatedReadyAt: '2026-11-26T10:00:00+07:00',
-        timeline: [
-          {
-            id: 'tl-5',
-            timestamp: '2026-11-24T08:50:00+07:00',
-            status: 'Diajukan',
-            actor: 'Bagas Prakoso Putra',
-            note: 'Permohonan legalisir 8 lembar Ijazah diajukan online.',
-          },
-          {
-            id: 'tl-6',
-            timestamp: '2026-11-24T10:15:00+07:00',
-            status: 'Verifikasi Berkas',
-            actor: 'Hendra Wijaya, A.Md.',
-            note: 'Ijazah asli telah dicocokkan dengan buku induk alumni tahun 2024.',
-          },
-          {
-            id: 'tl-7',
-            timestamp: '2026-11-24T15:10:00+07:00',
-            status: 'Menunggu TTD Kepala Sekolah',
-            actor: 'Hendra Wijaya, A.Md.',
-            note: 'Seluruh lembar fotokopi telah dibubuhi cap legalisir, menunggu pengesahan Kepala Sekolah.',
-          },
-        ],
-      },
-      {
-        id: 'TU-2026-0150',
-        serviceId: 'surat-tugas',
-        serviceTitle: 'Surat Tugas & Administrasi Kepegawaian',
-        applicantName: 'Dra. Ratna Dwi Anggraini, M.Pd.',
-        applicantRole: 'Guru / Tendik',
-        identityNumber: '197804122005012014',
-        classOrCohort: 'Guru Bahasa Indonesia',
-        phone: '0813-3019-4451',
-        purpose: 'Surat Tugas Mengikuti Workshop Kurikulum Merdeka MGMP Kota Surabaya di SMAN 5 Surabaya',
-        notes: 'Pelaksanaan hari Kamis, 26 November 2026 pukul 08.00 – 15.00 WIB.',
-        submittedRequirements: [
-          'Nota dinas / surat undangan rapat, diklat, atau MGMP dari instansi pengundang',
-          'Data NIP / NUPTK dan golongan/jabatan pemohon',
-          'Jadwal dan lokasi penugasan resmi',
-        ],
-        status: 'Proses Pengetikan',
-        letterNumber: '800/123/101.6.1.9/2026',
-        assignedStaff: 'Sulistyowati, S.Pd.',
-        createdAt: '2026-11-24T10:30:00+07:00',
-        updatedAt: '2026-11-25T07:45:00+07:00',
-        estimatedReadyAt: '2026-11-25T13:00:00+07:00',
-        timeline: [
-          {
-            id: 'tl-8',
-            timestamp: '2026-11-24T10:30:00+07:00',
-            status: 'Diajukan',
-            actor: 'Dra. Ratna Dwi Anggraini, M.Pd.',
-            note: 'Pengajuan Surat Tugas MGMP berdasarkan undangan No. 042/MGMP-BI/XI/2026.',
-          },
-          {
-            id: 'tl-9',
-            timestamp: '2026-11-25T07:45:00+07:00',
-            status: 'Proses Pengetikan',
-            actor: 'Sulistyowati, S.Pd.',
-            note: 'Draf surat tugas dan SPPD sedang disusun dengan nomor 800/123/101.6.1.9/2026.',
-          },
-        ],
-      },
-      {
-        id: 'TU-2026-0151',
-        serviceId: 'perbaikan-data',
-        serviceTitle: 'Perbaikan Data Pokok (Dapodik & NISN)',
-        applicantName: 'Muhammad Farhan Al-Rasyid',
-        applicantRole: 'Siswa',
-        identityNumber: '0087712409',
-        classOrCohort: 'XII-MIPA 2',
-        phone: '0821-4098-1173',
-        purpose: 'Perbaikan tanda hubung pada nama siswa di sistem VervalPD agar sinkron dengan Akta Kelahiran untuk SNPMB 2027',
-        notes: 'Di Dapodik tertulis Al Rasyid tanpa tanda hubung, sedangkan Akta & KK menggunakan Al-Rasyid.',
-        submittedRequirements: [
-          'Fotokopi Akta Kelahiran asli yang jelas terbaca',
-          'Fotokopi Kartu Keluarga (KK) terbaru tervalidasi Dukcapil',
-        ],
-        status: 'Perlu Perbaikan',
-        assignedStaff: 'Rizky Pratama, S.Kom.',
-        createdAt: '2026-11-22T13:10:00+07:00',
-        updatedAt: '2026-11-24T09:15:00+07:00',
-        estimatedReadyAt: '2026-11-26T15:00:00+07:00',
-        revisionNote: 'Mohon melampirkan scan fotokopi Ijazah SMP asli karena perubahan nama memerlukan lampiran ijazah jenjang sebelumnya di VervalPD.',
-        timeline: [
-          {
-            id: 'tl-10',
-            timestamp: '2026-11-22T13:10:00+07:00',
-            status: 'Diajukan',
-            actor: 'Muhammad Farhan Al-Rasyid',
-            note: 'Permohonan VervalPD diajukan untuk sinkronisasi nama.',
-          },
-          {
-            id: 'tl-11',
-            timestamp: '2026-11-24T09:15:00+07:00',
-            status: 'Perlu Perbaikan',
-            actor: 'Rizky Pratama, S.Kom.',
-            note: 'Kekurangan berkas: fotokopi Ijazah SMP belum disertakan saat verifikasi operator Dapodik.',
-          },
-        ],
-      },
-      {
-        id: 'TU-2026-0152',
-        serviceId: 'rekomendasi',
-        serviceTitle: 'Surat Rekomendasi & Pengantar Lomba',
-        applicantName: 'Clarissa Putri Maharani',
-        applicantRole: 'Siswa',
-        identityNumber: '0098123456',
-        classOrCohort: 'X-E5',
-        phone: '0819-0334-7821',
-        purpose: 'Surat Rekomendasi Sekolah untuk Lomba Debat Bahasa Inggris Tingkat SMA se-Jawa Timur di Universitas Airlangga',
-        notes: 'Tim terdiri dari 3 siswa kelas X dan XI dengan pembina Ibu Rina Kartika, S.Pd.',
-        submittedRequirements: [
-          'Poster / Surat Undangan resmi penyelenggara kegiatan atau beasiswa',
-          'Persetujuan guru pembina ekstrakurikuler atau wali kelas',
-          'Data lengkap peserta (Nama, Kelas, NISN)',
-        ],
-        status: 'Diajukan',
-        assignedStaff: 'Sulistyowati, S.Pd.',
-        createdAt: '2026-11-25T07:30:00+07:00',
-        updatedAt: '2026-11-25T07:30:00+07:00',
-        estimatedReadyAt: '2026-11-26T11:00:00+07:00',
-        timeline: [
-          {
-            id: 'tl-12',
-            timestamp: '2026-11-25T07:30:00+07:00',
-            status: 'Diajukan',
-            actor: 'Clarissa Putri Maharani',
-            note: 'Permohonan surat rekomendasi lomba diterima sistem antrean TU.',
-          },
-        ],
-      },
-      {
-        id: 'TU-2026-0141',
-        serviceId: 'izin-kegiatan',
-        serviceTitle: 'Surat Izin & Dispensasi Kegiatan',
-        applicantName: 'Tim Basket Putra SMAN 9 Surabaya',
-        applicantRole: 'Siswa',
-        identityNumber: '0086543210',
-        classOrCohort: 'XI-F1 / XI-F4 / XII-MIPA',
-        phone: '0812-1778-9022',
-        purpose: 'Dispensasi Mengikuti Turnamen Basket Antar-SMA DBL East Java Series',
-        notes: '12 pemain dan 2 ofisial siswa, jadwal bertanding tanggal 20 November 2026.',
-        submittedRequirements: [
-          'Surat tugas / undangan resmi kegiatan dari panitia atau dinas',
-          'Daftar nama peserta dan pendamping lengkap beserta kelas',
-          'Rentang tanggal dan jam pelaksanaan kegiatan',
-        ],
-        status: 'Selesai',
-        letterNumber: '421.3/112/101.6.1.9/2026',
-        assignedStaff: 'Sulistyowati, S.Pd.',
-        createdAt: '2026-11-18T08:00:00+07:00',
-        updatedAt: '2026-11-19T14:20:00+07:00',
-        estimatedReadyAt: '2026-11-19T12:00:00+07:00',
-        timeline: [
-          {
-            id: 'tl-13',
-            timestamp: '2026-11-18T08:00:00+07:00',
-            status: 'Diajukan',
-            actor: 'Tim Basket Putra SMAN 9 Surabaya',
-            note: 'Berkas pengajuan dispensasi disampaikan ke loket TU.',
-          },
-          {
-            id: 'tl-14',
-            timestamp: '2026-11-19T14:20:00+07:00',
-            status: 'Selesai',
-            actor: 'Sulistyowati, S.Pd.',
-            note: 'Surat dispensasi No. 421.3/112/101.6.1.9/2026 telah diambil oleh ketua tim.',
-          },
-        ],
-      },
-    ],
-    agenda: [
-      {
-        id: 'ag-1',
-        type: 'Surat Masuk',
-        agendaNumber: 'SM/2026/0384',
-        letterNumber: '420/6112/101.6/2026',
-        letterDate: '2026-11-20',
-        recordedDate: '2026-11-21',
-        counterparty: 'Cabang Dinas Pendidikan Wilayah Sidoarjo & Surabaya',
-        subject: 'Undangan Rapat Koordinasi Persiapan Pelaksanaan Asesmen Sumatif Akhir Semester Ganjil',
-        classification: 'Penting',
-        disposition: 'Diteruskan ke Waka Kurikulum & Kepala Sekolah untuk penugasan hadir.',
-      },
-      {
-        id: 'ag-2',
-        type: 'Surat Keluar',
-        agendaNumber: 'SK/2026/0219',
-        letterNumber: '421.3/118/101.6.1.9/2026',
-        letterDate: '2026-11-24',
-        recordedDate: '2026-11-24',
-        counterparty: 'Dinas Pendidikan Kota Surabaya (Cq. Bagian Beasiswa)',
-        subject: 'Surat Keterangan Siswa Aktif a.n. Nadia Kusuma Wardhani (XI-F3)',
-        classification: 'Biasa',
-        disposition: 'Diarsipkan pada ordner Surat Keterangan Siswa 2026.',
-        relatedTicketId: 'TU-2026-0148',
-      },
-      {
-        id: 'ag-3',
-        type: 'Surat Masuk',
-        agendaNumber: 'SM/2026/0385',
-        letterNumber: '089/UN3.14/KM/2026',
-        letterDate: '2026-11-22',
-        recordedDate: '2026-11-23',
-        counterparty: 'Fakultas Ilmu Budaya Universitas Airlangga',
-        subject: 'Permohonan Delegasi Lomba Debat Bahasa Inggris Tingkat SMA se-Jawa Timur',
-        classification: 'Biasa',
-        disposition: 'Disposisi ke Waka Kesiswaan dan Pembina English Club.',
-      },
-      {
-        id: 'ag-4',
-        type: 'Surat Keluar',
-        agendaNumber: 'SK/2026/0220',
-        letterNumber: '421.3/112/101.6.1.9/2026',
-        letterDate: '2026-11-19',
-        recordedDate: '2026-11-19',
-        counterparty: 'Bapak/Ibu Guru Mata Pelajaran & Panitia DBL East Java',
-        subject: 'Surat Dispensasi Kegiatan Turnamen Basket Putra SMAN 9 Surabaya',
-        classification: 'Segera',
-        disposition: 'Tembusan Waka Kesiswaan dan Piket KBM.',
-        relatedTicketId: 'TU-2026-0141',
-      },
-      {
-        id: 'ag-5',
-        type: 'Surat Masuk',
-        agendaNumber: 'SM/2026/0386',
-        letterNumber: '005/3421/101.1/2026',
-        letterDate: '2026-11-24',
-        recordedDate: '2026-11-25',
-        counterparty: 'Dinas Pendidikan Provinsi Jawa Timur',
-        subject: 'Edaran Pemutakhiran Data Dapodik Semester Ganjil Tahun Pelajaran 2026/2027',
-        classification: 'Segera',
-        disposition: 'Segera ditindaklanjuti oleh Operator Dapodik & Koordinator TU.',
-      },
-    ],
+    students: [],
+    requests: [],
+    agenda: [],
   };
+}
+
+function loadInitialGtkSeeds(): DapodikGtk[] {
+  return buildSman9PtkSeeds().map(applyDispendukcapilCheck);
 }
 
 const BUILTIN_KOP_ASSETS = new Set([
@@ -967,6 +177,7 @@ function sanitizeKopSurat(
 
   return {
     config: {
+      showKopSurat: raw.showKopSurat !== false,
       mode,
       bannerImageDataUrl,
       leftLogoDataUrl,
@@ -986,13 +197,46 @@ function sanitizeKopSurat(
   };
 }
 
+function sanitizeReportingPortal(
+  input: unknown,
+  fallback: ReportingPortalConfig = DEFAULT_REPORTING_PORTAL
+): ReportingPortalConfig {
+  if (!input || typeof input !== 'object') return fallback;
+  const raw = input as Partial<ReportingPortalConfig>;
+  return {
+    isOpen: raw.isOpen !== false,
+    closedMessage:
+      typeof raw.closedMessage === 'string' && raw.closedMessage.trim()
+        ? raw.closedMessage.trim().slice(0, 500)
+        : fallback.closedMessage,
+    updatedAt:
+      typeof raw.updatedAt === 'string' && raw.updatedAt
+        ? raw.updatedAt
+        : new Date().toISOString(),
+    updatedBy:
+      typeof raw.updatedBy === 'string' && raw.updatedBy
+        ? raw.updatedBy.trim().slice(0, 120)
+        : fallback.updatedBy,
+  };
+}
+
+function loadInitialRombelSeeds(gtkList: DapodikGtk[]): DapodikRombel[] {
+  return sortRombelsNaturally(
+    buildSman9RombelSeeds().map((r) => normalizeRombelRecord(r, gtkList))
+  );
+}
+
 function readStore(): ServerStore {
   if (!fs.existsSync(STORE_PATH)) {
     const seeds = loadInitialSeeds();
+    const gtkList = loadInitialGtkSeeds();
     const initial: ServerStore = {
       claimedToken: null,
       kopSurat: DEFAULT_KOP_SURAT,
+      reportingPortal: DEFAULT_REPORTING_PORTAL,
       students: seeds.students,
+      gtkList,
+      rombels: loadInitialRombelSeeds(gtkList),
       requests: seeds.requests,
       agenda: seeds.agenda,
     };
@@ -1006,19 +250,52 @@ function readStore(): ServerStore {
     const kopResult = parsed.kopSurat
       ? sanitizeKopSurat(parsed.kopSurat, DEFAULT_KOP_SURAT)
       : { config: DEFAULT_KOP_SURAT };
+    const reportingPortal = parsed.reportingPortal
+      ? sanitizeReportingPortal(parsed.reportingPortal, DEFAULT_REPORTING_PORTAL)
+      : DEFAULT_REPORTING_PORTAL;
+    const hasLegacyGtkOnly =
+      Array.isArray(parsed.gtkList) &&
+      parsed.gtkList.length <= 6 &&
+      parsed.gtkList.every(
+        (g) => typeof g?.id === 'string' && /^gtk-00[1-6]$/.test(g.id)
+      );
+    const gtkList =
+      Array.isArray(parsed.gtkList) && !hasLegacyGtkOnly
+        ? parsed.gtkList.map(applyDispendukcapilCheck)
+        : loadInitialGtkSeeds();
+    const rombels =
+      Array.isArray(parsed.rombels) && parsed.rombels.length > 0
+        ? sortRombelsNaturally(parsed.rombels.map((r) => normalizeRombelRecord(r, gtkList)))
+        : loadInitialRombelSeeds(gtkList);
+    const students = Array.isArray(parsed.students)
+      ? parsed.students.filter((s) => !isLegacyDummyStudent(s))
+      : seeds.students;
+    const requests = Array.isArray(parsed.requests)
+      ? parsed.requests.filter((r) => r && !LEGACY_DUMMY_REQUEST_IDS.has(r.id))
+      : seeds.requests;
+    const agenda = Array.isArray(parsed.agenda)
+      ? parsed.agenda.filter((a) => a && !LEGACY_DUMMY_AGENDA_IDS.has(a.id))
+      : seeds.agenda;
     return {
       claimedToken: parsed.claimedToken ?? null,
       kopSurat: kopResult.config,
-      students: Array.isArray(parsed.students) ? parsed.students : seeds.students,
-      requests: Array.isArray(parsed.requests) ? parsed.requests : seeds.requests,
-      agenda: Array.isArray(parsed.agenda) ? parsed.agenda : seeds.agenda,
+      reportingPortal,
+      students,
+      gtkList,
+      rombels,
+      requests,
+      agenda,
     };
   } catch {
     const seeds = loadInitialSeeds();
+    const gtkList = loadInitialGtkSeeds();
     return {
       claimedToken: null,
       kopSurat: DEFAULT_KOP_SURAT,
+      reportingPortal: DEFAULT_REPORTING_PORTAL,
       students: seeds.students,
+      gtkList,
+      rombels: loadInitialRombelSeeds(gtkList),
       requests: seeds.requests,
       agenda: seeds.agenda,
     };
@@ -1284,6 +561,15 @@ async function startServer() {
   });
 
   app.post('/api/requests', (req: Request, res: Response) => {
+    const store = readStore();
+    const petugasSession = verifySessionToken(req.headers.authorization);
+    if (!store.reportingPortal.isOpen && !petugasSession) {
+      res.status(403).json({
+        error: store.reportingPortal.closedMessage || 'Pelayanan pelaporan/permohonan daring sedang ditutup sementara.',
+      });
+      return;
+    }
+
     const body = req.body as Partial<ServiceRequest>;
     if (
       typeof body?.applicantName !== 'string' ||
@@ -1301,7 +587,6 @@ async function startServer() {
       return;
     }
 
-    const store = readStore();
     const nowIso = new Date().toISOString();
     const nextNumber = 153 + store.requests.length;
     const ticketId = `TU-2026-${String(nextNumber).padStart(4, '0')}`;
@@ -1571,6 +856,293 @@ async function startServer() {
     store.kopSurat = config;
     writeStore(store);
     res.json(store.kopSurat);
+  });
+
+  // Reporting Open/Close Portal Routes (GET public; PUT protected)
+  app.get('/api/reporting-status', (_req: Request, res: Response) => {
+    const store = readStore();
+    res.json(store.reportingPortal);
+  });
+
+  app.put('/api/reporting-status', requirePetugasAuth, (req: Request, res: Response) => {
+    const store = readStore();
+    const staffName = (res.locals.petugas as SessionPayload | undefined)?.staffName || 'Sulistyowati, S.Pd.';
+    const updated = sanitizeReportingPortal(
+      {
+        ...(req.body as Partial<ReportingPortalConfig>),
+        updatedAt: new Date().toISOString(),
+        updatedBy: staffName,
+      },
+      store.reportingPortal
+    );
+    store.reportingPortal = updated;
+    writeStore(store);
+    res.json(store.reportingPortal);
+  });
+
+  // Protected GTK Dapodik + Dispendukcapil NIK Matching Routes
+  app.get('/api/gtk', requirePetugasAuth, (_req: Request, res: Response) => {
+    const store = readStore();
+    res.json(store.gtkList);
+  });
+
+  app.post('/api/gtk', requirePetugasAuth, (req: Request, res: Response) => {
+    const incoming = req.body as DapodikGtk;
+    if (!incoming || typeof incoming.nama !== 'string' || !incoming.nama.trim()) {
+      res.status(400).json({ error: 'Nama PTK wajib diisi.' });
+      return;
+    }
+    if (!isSafeRasterImageDataUrl(incoming.fotoDataUrl ?? '')) {
+      res.status(400).json({ error: 'Format foto PTK tidak valid atau melebihi batas ukuran.' });
+      return;
+    }
+    const store = readStore();
+    const checked = applyDispendukcapilCheck({
+      ...incoming,
+      fotoDataUrl: incoming.fotoDataUrl ?? '',
+      id: `gtk-${Date.now()}`,
+    });
+    store.gtkList.unshift(checked);
+    writeStore(store);
+    res.status(201).json(checked);
+  });
+
+  app.put('/api/gtk/:id', requirePetugasAuth, (req: Request, res: Response) => {
+    const { id } = req.params;
+    const incoming = req.body as DapodikGtk;
+    if (!isSafeRasterImageDataUrl(incoming?.fotoDataUrl ?? '')) {
+      res.status(400).json({ error: 'Format foto PTK tidak valid atau melebihi batas ukuran.' });
+      return;
+    }
+    const store = readStore();
+    const idx = store.gtkList.findIndex((g) => g.id === id);
+    if (idx < 0) {
+      res.status(404).json({ error: 'Data PTK tidak ditemukan.' });
+      return;
+    }
+    const checked = applyDispendukcapilCheck({
+      ...incoming,
+      fotoDataUrl: incoming.fotoDataUrl ?? '',
+      id,
+    });
+    store.gtkList[idx] = checked;
+    writeStore(store);
+    res.json(checked);
+  });
+
+  app.delete('/api/gtk/:id', requirePetugasAuth, (req: Request, res: Response) => {
+    const { id } = req.params;
+    const store = readStore();
+    store.gtkList = store.gtkList.filter((g) => g.id !== id);
+    writeStore(store);
+    res.json({ ok: true });
+  });
+
+  app.post('/api/gtk/import', requirePetugasAuth, (req: Request, res: Response) => {
+    const { gtkList: incomingList, mode } = req.body as {
+      gtkList?: DapodikGtk[];
+      mode?: 'upsert' | 'append' | 'replace';
+    };
+    if (!Array.isArray(incomingList)) {
+      res.status(400).json({ error: 'Daftar data GTK tidak valid.' });
+      return;
+    }
+    const store = readStore();
+    let addedCount = 0;
+    let updatedCount = 0;
+    const checkedIncoming = incomingList.map((g, idx) =>
+      applyDispendukcapilCheck({
+        ...g,
+        fotoDataUrl: isSafeRasterImageDataUrl(g.fotoDataUrl ?? '') ? (g.fotoDataUrl ?? '') : '',
+        id: g.id || `gtk-imp-${Date.now()}-${idx}`,
+      })
+    );
+
+    if (mode === 'replace') {
+      store.gtkList = checkedIncoming;
+      addedCount = checkedIncoming.length;
+    } else if (mode === 'append') {
+      store.gtkList = [...checkedIncoming, ...store.gtkList];
+      addedCount = checkedIncoming.length;
+    } else {
+      for (const incoming of checkedIncoming) {
+        const matchIdx = store.gtkList.findIndex(
+          (existing) =>
+            (incoming.nik && existing.nik === incoming.nik) ||
+            (incoming.nip && existing.nip === incoming.nip) ||
+            (incoming.nuptk && existing.nuptk === incoming.nuptk)
+        );
+        if (matchIdx >= 0) {
+          store.gtkList[matchIdx] = applyDispendukcapilCheck({
+            ...store.gtkList[matchIdx],
+            ...incoming,
+            fotoDataUrl: incoming.fotoDataUrl || store.gtkList[matchIdx].fotoDataUrl || '',
+            id: store.gtkList[matchIdx].id,
+          });
+          updatedCount++;
+        } else {
+          store.gtkList.unshift(incoming);
+          addedCount++;
+        }
+      }
+    }
+
+    writeStore(store);
+    res.json({
+      gtkList: store.gtkList,
+      addedCount,
+      updatedCount,
+    });
+  });
+
+  app.post('/api/gtk/padan-dispendukcapil', requirePetugasAuth, (_req: Request, res: Response) => {
+    const store = readStore();
+    store.gtkList = store.gtkList.map(applyDispendukcapilCheck);
+    writeStore(store);
+    res.json({
+      gtkList: store.gtkList,
+      padanCount: store.gtkList.filter((g) => g.dukcapilStatus === 'Padan Dispendukcapil').length,
+      residuCount: store.gtkList.filter((g) => g.dukcapilStatus === 'Residu Data').length,
+      invalidCount: store.gtkList.filter((g) => g.dukcapilStatus === 'Tidak Padan NIK').length,
+    });
+  });
+
+  // Public Rombel lookup (class codes only, no staff PII)
+  app.get('/api/rombel/public', (_req: Request, res: Response) => {
+    const store = readStore();
+    res.json(
+      store.rombels.map((r) => ({
+        id: r.id,
+        namaRombel: r.namaRombel,
+        tingkatKelas: r.tingkatKelas,
+        ruangan: r.ruangan,
+      }))
+    );
+  });
+
+  // Protected Rombongan Belajar & Wali Kelas Settings Routes
+  app.get('/api/rombel', requirePetugasAuth, (_req: Request, res: Response) => {
+    const store = readStore();
+    res.json(store.rombels);
+  });
+
+  app.post('/api/rombel', requirePetugasAuth, (req: Request, res: Response) => {
+    const incoming = req.body as DapodikRombel;
+    if (!incoming || typeof incoming.namaRombel !== 'string' || !incoming.namaRombel.trim()) {
+      res.status(400).json({ error: 'Nama rombel wajib diisi.' });
+      return;
+    }
+    const store = readStore();
+    const created = normalizeRombelRecord(
+      {
+        ...incoming,
+        id: `rombel-${Date.now()}`,
+        updatedAt: new Date().toISOString(),
+      },
+      store.gtkList
+    );
+    store.rombels = sortRombelsNaturally([...store.rombels, created]);
+    writeStore(store);
+    res.status(201).json(created);
+  });
+
+  app.put('/api/rombel/:id', requirePetugasAuth, (req: Request, res: Response) => {
+    const { id } = req.params;
+    const incoming = req.body as DapodikRombel;
+    if (!incoming || typeof incoming.namaRombel !== 'string' || !incoming.namaRombel.trim()) {
+      res.status(400).json({ error: 'Nama rombel wajib diisi.' });
+      return;
+    }
+    const store = readStore();
+    const idx = store.rombels.findIndex((r) => r.id === id);
+    if (idx < 0) {
+      res.status(404).json({ error: 'Data rombel tidak ditemukan.' });
+      return;
+    }
+    const updated = normalizeRombelRecord(
+      {
+        ...store.rombels[idx],
+        ...incoming,
+        id,
+        updatedAt: new Date().toISOString(),
+      },
+      store.gtkList
+    );
+    store.rombels[idx] = updated;
+    store.rombels = sortRombelsNaturally(store.rombels);
+    writeStore(store);
+    res.json(updated);
+  });
+
+  app.delete('/api/rombel/:id', requirePetugasAuth, (req: Request, res: Response) => {
+    const { id } = req.params;
+    const store = readStore();
+    store.rombels = store.rombels.filter((r) => r.id !== id);
+    writeStore(store);
+    res.json({ ok: true });
+  });
+
+  app.post('/api/rombel/import', requirePetugasAuth, (req: Request, res: Response) => {
+    const { rombels: incomingList, mode } = req.body as {
+      rombels?: DapodikRombel[];
+      mode?: 'upsert' | 'append' | 'replace';
+    };
+    if (!Array.isArray(incomingList)) {
+      res.status(400).json({ error: 'Daftar rombongan belajar tidak valid.' });
+      return;
+    }
+    const store = readStore();
+    let addedCount = 0;
+    let updatedCount = 0;
+
+    const normalizedIncoming = incomingList
+      .filter((r) => r && typeof r.namaRombel === 'string' && r.namaRombel.trim())
+      .map((r, idx) =>
+        normalizeRombelRecord(
+          {
+            ...r,
+            id: r.id || `rombel-imp-${Date.now()}-${idx}`,
+          },
+          store.gtkList
+        )
+      );
+
+    if (mode === 'replace') {
+      store.rombels = sortRombelsNaturally(normalizedIncoming);
+      addedCount = normalizedIncoming.length;
+    } else if (mode === 'append') {
+      store.rombels = sortRombelsNaturally([...store.rombels, ...normalizedIncoming]);
+      addedCount = normalizedIncoming.length;
+    } else {
+      for (const incoming of normalizedIncoming) {
+        const matchIdx = store.rombels.findIndex(
+          (existing) => existing.namaRombel.toUpperCase() === incoming.namaRombel.toUpperCase()
+        );
+        if (matchIdx >= 0) {
+          store.rombels[matchIdx] = normalizeRombelRecord(
+            {
+              ...store.rombels[matchIdx],
+              ...incoming,
+              id: store.rombels[matchIdx].id,
+              updatedAt: new Date().toISOString(),
+            },
+            store.gtkList
+          );
+          updatedCount++;
+        } else {
+          store.rombels.push(incoming);
+          addedCount++;
+        }
+      }
+      store.rombels = sortRombelsNaturally(store.rombels);
+    }
+
+    writeStore(store);
+    res.json({
+      rombels: store.rombels,
+      addedCount,
+      updatedCount,
+    });
   });
 
   // Vite dev middleware or production static assets

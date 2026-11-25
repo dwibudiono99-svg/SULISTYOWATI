@@ -10,12 +10,14 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import {
+  DapodikRombel,
   DapodikStudent,
   DapodikValidationLevel,
   ServiceCategoryId,
   UserMode,
 } from '../types/tu';
 import { validateDapodikStudent } from '../utils/dapodikValidation';
+import { normalizeRombelKey, sortRombelsNaturally } from '../utils/rombelDapodikUtils';
 import {
   DapodikImportExportModal,
   ImportMergeMode,
@@ -24,6 +26,7 @@ import { DapodikStudentModal } from './DapodikStudentModal';
 
 interface DapodikDatabaseViewProps {
   students: DapodikStudent[];
+  rombels: DapodikRombel[];
   userMode: UserMode;
   onSaveStudent: (student: DapodikStudent, isNew: boolean) => void;
   onDeleteStudent: (id: string) => void;
@@ -33,6 +36,7 @@ interface DapodikDatabaseViewProps {
 
 export function DapodikDatabaseView({
   students,
+  rombels,
   userMode,
   onSaveStudent,
   onDeleteStudent,
@@ -41,6 +45,7 @@ export function DapodikDatabaseView({
 }: DapodikDatabaseViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [gradeFilter, setGradeFilter] = useState<'ALL' | 'X' | 'XI' | 'XII' | 'Alumni'>('ALL');
+  const [rombelFilter, setRombelFilter] = useState<string>('ALL');
   const [validationFilter, setValidationFilter] = useState<'ALL' | DapodikValidationLevel>('ALL');
   const [inspectedStudent, setInspectedStudent] = useState<DapodikStudent | null>(null);
   const [creatingNew, setCreatingNew] = useState(false);
@@ -64,10 +69,39 @@ export function DapodikDatabaseView({
     return { total, valid, residu, invalid };
   }, [enrichedStudents]);
 
+  const sortedRombels = useMemo(() => sortRombelsNaturally(rombels), [rombels]);
+
+  const rombelOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const s of students) {
+      const k = normalizeRombelKey(s.rombelSaatIni);
+      if (!k) continue;
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    return sortedRombels
+      .filter((r) => {
+        if (gradeFilter === 'X') return r.tingkatKelas === '10';
+        if (gradeFilter === 'XI') return r.tingkatKelas === '11';
+        if (gradeFilter === 'XII') return r.tingkatKelas === '12';
+        return true;
+      })
+      .map((r) => ({
+        namaRombel: r.namaRombel,
+        key: normalizeRombelKey(r.namaRombel),
+        count: counts.get(normalizeRombelKey(r.namaRombel)) ?? 0,
+      }));
+  }, [sortedRombels, students, gradeFilter]);
+
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return enrichedStudents.filter(({ student, validation }) => {
       if (gradeFilter !== 'ALL' && student.tingkatKelas !== gradeFilter) return false;
+      if (
+        rombelFilter !== 'ALL' &&
+        normalizeRombelKey(student.rombelSaatIni) !== rombelFilter
+      ) {
+        return false;
+      }
       if (validationFilter !== 'ALL' && validation.level !== validationFilter) return false;
       if (!q) return true;
       return (
@@ -79,7 +113,7 @@ export function DapodikDatabaseView({
         student.namaIbu.toLowerCase().includes(q)
       );
     });
-  }, [enrichedStudents, searchQuery, gradeFilter, validationFilter]);
+  }, [enrichedStudents, searchQuery, gradeFilter, rombelFilter, validationFilter]);
 
   return (
     <div className="space-y-6">
@@ -91,7 +125,9 @@ export function DapodikDatabaseView({
             <p className="mt-2 font-mono text-2xl font-semibold tabular-nums text-slate-900">
               {stats.total}
             </p>
-            <p className="mt-1 text-xs text-slate-500">Tercatat di Buku Induk</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Tercatat di {sortedRombels.length} Rombel aktif
+            </p>
           </div>
           <div className="p-5">
             <p className="text-xs font-medium text-slate-500">Valid & Padan Dukcapil</p>
@@ -138,17 +174,32 @@ export function DapodikDatabaseView({
 
             <select
               value={gradeFilter}
-              onChange={(e) =>
-                setGradeFilter(e.target.value as 'ALL' | 'X' | 'XI' | 'XII' | 'Alumni')
-              }
+              onChange={(e) => {
+                setGradeFilter(e.target.value as 'ALL' | 'X' | 'XI' | 'XII' | 'Alumni');
+                setRombelFilter('ALL');
+              }}
               aria-label="Filter tingkat kelas"
               className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800"
             >
-              <option value="ALL">Semua Tingkat / Rombel</option>
+              <option value="ALL">Semua Tingkat</option>
               <option value="X">Kelas X</option>
               <option value="XI">Kelas XI</option>
               <option value="XII">Kelas XII</option>
               <option value="Alumni">Alumni / Lulus</option>
+            </select>
+
+            <select
+              value={rombelFilter}
+              onChange={(e) => setRombelFilter(e.target.value)}
+              aria-label="Filter rombongan belajar"
+              className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800"
+            >
+              <option value="ALL">Semua Rombel ({sortedRombels.length})</option>
+              {rombelOptions.map((opt) => (
+                <option key={opt.key} value={opt.key}>
+                  {opt.namaRombel} ({opt.count} siswa)
+                </option>
+              ))}
             </select>
           </div>
 
@@ -317,6 +368,7 @@ export function DapodikDatabaseView({
         student={inspectedStudent}
         isCreating={creatingNew}
         userMode={userMode}
+        rombels={sortedRombels}
         onClose={() => {
           setInspectedStudent(null);
           setCreatingNew(false);

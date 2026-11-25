@@ -3,19 +3,29 @@ import { useCallback, useEffect, useState } from 'react';
 import { AgendaSuratView } from './components/AgendaSuratView';
 import { DapodikDatabaseView } from './components/DapodikDatabaseView';
 import { ImportMergeMode } from './components/DapodikImportExportModal';
-import { DocumentPrintView } from './components/DocumentPrintView';
+import { DocumentPrintView, PrintDocumentMode } from './components/DocumentPrintView';
+import { GtkDatabaseView } from './components/GtkDatabaseView';
 import { HeaderBar } from './components/HeaderBar';
 import { OverviewView } from './components/OverviewView';
 import { PetugasTokenGateModal, TuAuthStatus } from './components/PetugasTokenGateModal';
 import { QueueTrackingView } from './components/QueueTrackingView';
+import { ReportingControlModal } from './components/ReportingControlModal';
 import { RequestDetailDrawer } from './components/RequestDetailDrawer';
+import { RombelWaliKelasView } from './components/RombelWaliKelasView';
 import { Sidebar } from './components/Sidebar';
 import { SubmitRequestView } from './components/SubmitRequestView';
-import { DEFAULT_KOP_SURAT_CONFIG, SCHOOL_INFO } from './config/schoolConfig';
+import {
+  DEFAULT_KOP_SURAT_CONFIG,
+  DEFAULT_REPORTING_PORTAL_CONFIG,
+  SCHOOL_INFO,
+} from './config/schoolConfig';
 import {
   AgendaEntry,
+  DapodikGtk,
+  DapodikRombel,
   DapodikStudent,
   KopSuratConfig,
+  ReportingPortalConfig,
   RequestStatus,
   ServiceCategoryId,
   ServiceRequest,
@@ -23,7 +33,7 @@ import {
   WorkspaceTab,
 } from './types/tu';
 
-const PROTECTED_TABS = new Set<WorkspaceTab>(['dapodik', 'agenda']);
+const PROTECTED_TABS = new Set<WorkspaceTab>(['dapodik', 'gtk', 'rombel', 'agenda']);
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('beranda');
@@ -40,19 +50,26 @@ export default function App() {
   const [tokenModalOpen, setTokenModalOpen] = useState(false);
   const [tokenModalMode, setTokenModalMode] = useState<'login' | 'claim' | 'change'>('login');
   const [pendingTargetTab, setPendingTargetTab] = useState<WorkspaceTab | null>(null);
+  const [reportingModalOpen, setReportingModalOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
   const [agendaEntries, setAgendaEntries] = useState<AgendaEntry[]>([]);
   const [students, setStudents] = useState<DapodikStudent[]>([]);
+  const [gtkList, setGtkList] = useState<DapodikGtk[]>([]);
+  const [rombels, setRombels] = useState<DapodikRombel[]>([]);
   const [kopSuratConfig, setKopSuratConfig] = useState<KopSuratConfig>(DEFAULT_KOP_SURAT_CONFIG);
+  const [reportingPortal, setReportingPortal] = useState<ReportingPortalConfig>(
+    DEFAULT_REPORTING_PORTAL_CONFIG
+  );
 
   const [selectedServiceId, setSelectedServiceId] = useState<ServiceCategoryId>('surat-aktif');
   const [prefillStudent, setPrefillStudent] = useState<DapodikStudent | null>(null);
+  const [prefillGtk, setPrefillGtk] = useState<DapodikGtk | null>(null);
   const [queueSearchInitial, setQueueSearchInitial] = useState('');
   const [inspectedRequestId, setInspectedRequestId] = useState<string | null>(null);
   const [printTargetId, setPrintTargetId] = useState<string | undefined>(undefined);
-  const [printDocMode, setPrintDocMode] = useState<'surat' | 'tanda-terima'>('tanda-terima');
+  const [printDocMode, setPrintDocMode] = useState<PrintDocumentMode>('tanda-terima');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const refreshAuthStatus = useCallback(async (token: string | null) => {
@@ -95,13 +112,28 @@ export default function App() {
     }
   }, []);
 
+  const loadReportingStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/reporting-status');
+      if (res.ok) {
+        const data = (await res.json()) as ReportingPortalConfig;
+        setReportingPortal(data);
+      }
+    } catch {
+      // Fallback to default config
+    }
+  }, []);
+
   const handleLockToPemohon = useCallback(
     (message?: string) => {
       setSessionToken(null);
       setUserMode('pemohon');
       setStudents([]);
+      setGtkList([]);
+      setRombels([]);
       setAgendaEntries([]);
       setPrefillStudent(null);
+      setPrefillGtk(null);
       setActiveTab((curr) => (PROTECTED_TABS.has(curr) ? 'beranda' : curr));
       setPrintDocMode('tanda-terima');
       void refreshAuthStatus(null);
@@ -115,19 +147,29 @@ export default function App() {
     async (token: string) => {
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        const [reqRes, stuRes, agRes] = await Promise.all([
+        const [reqRes, stuRes, gtkRes, rombelRes, agRes] = await Promise.all([
           fetch('/api/requests', { headers }),
           fetch('/api/students', { headers }),
+          fetch('/api/gtk', { headers }),
+          fetch('/api/rombel', { headers }),
           fetch('/api/agenda', { headers }),
         ]);
 
-        if (reqRes.status === 401 || stuRes.status === 401 || agRes.status === 401) {
+        if (
+          reqRes.status === 401 ||
+          stuRes.status === 401 ||
+          gtkRes.status === 401 ||
+          rombelRes.status === 401 ||
+          agRes.status === 401
+        ) {
           handleLockToPemohon('Sesi Petugas TU berakhir. Silakan verifikasi token kembali.');
           return;
         }
 
         if (reqRes.ok) setRequests((await reqRes.json()) as ServiceRequest[]);
         if (stuRes.ok) setStudents((await stuRes.json()) as DapodikStudent[]);
+        if (gtkRes.ok) setGtkList((await gtkRes.json()) as DapodikGtk[]);
+        if (rombelRes.ok) setRombels((await rombelRes.json()) as DapodikRombel[]);
         if (agRes.ok) setAgendaEntries((await agRes.json()) as AgendaEntry[]);
       } catch {
         setToastMessage('Gagal memuat data Petugas TU dari server.');
@@ -140,7 +182,8 @@ export default function App() {
     void refreshAuthStatus(null);
     void loadPublicRequests();
     void loadKopSurat();
-  }, [loadKopSurat, loadPublicRequests, refreshAuthStatus]);
+    void loadReportingStatus();
+  }, [loadKopSurat, loadPublicRequests, loadReportingStatus, refreshAuthStatus]);
 
   useEffect(() => {
     if (!toastMessage) return;
@@ -199,6 +242,7 @@ export default function App() {
 
   const handleStartRequest = (serviceId: ServiceCategoryId) => {
     setPrefillStudent(null);
+    setPrefillGtk(null);
     setSelectedServiceId(serviceId);
     setActiveTab('ajukan');
   };
@@ -207,20 +251,34 @@ export default function App() {
     student: DapodikStudent,
     serviceId: ServiceCategoryId
   ) => {
+    setPrefillGtk(null);
     setPrefillStudent(student);
     setSelectedServiceId(serviceId);
     setActiveTab('ajukan');
   };
 
+  const handleCreateLetterFromGtk = (gtk: DapodikGtk) => {
+    setPrefillStudent(null);
+    setPrefillGtk(gtk);
+    setSelectedServiceId('surat-tugas');
+    setActiveTab('ajukan');
+  };
+
   const handleSubmitNewRequest = async (newReq: ServiceRequest) => {
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
       const res = await fetch('/api/requests', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(newReq),
       });
       if (!res.ok) {
-        setToastMessage('Gagal mengirim permohonan layanan.');
+        const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+        if (res.status === 403) {
+          void loadReportingStatus();
+        }
+        setToastMessage(errBody?.error || 'Gagal mengirim permohonan layanan.');
         return;
       }
       const created = (await res.json()) as ServiceRequest;
@@ -230,6 +288,7 @@ export default function App() {
         await loadPublicRequests();
       }
       setPrefillStudent(null);
+      setPrefillGtk(null);
       setInspectedRequestId(created.id);
       setActiveTab('antrean');
       setToastMessage(`Permohonan ${created.id} berhasil diajukan ke antrean Tata Usaha.`);
@@ -488,17 +547,256 @@ export default function App() {
     }
   };
 
+  const handleSaveReportingStatus = async (
+    isOpen: boolean,
+    closedMessage: string
+  ): Promise<boolean> => {
+    if (!sessionToken) {
+      void requestPetugasAccess('beranda');
+      return false;
+    }
+    try {
+      const res = await fetch('/api/reporting-status', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ isOpen, closedMessage }),
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir.');
+        return false;
+      }
+      if (!res.ok) {
+        setToastMessage('Gagal mengubah status buka/tutup pelaporan.');
+        return false;
+      }
+      const updated = (await res.json()) as ReportingPortalConfig;
+      setReportingPortal(updated);
+      setToastMessage(
+        updated.isOpen
+          ? 'Sistem pelaporan & permohonan publik dibuka kembali.'
+          : 'Sistem pelaporan & permohonan publik ditutup sementara.'
+      );
+      return true;
+    } catch {
+      setToastMessage('Terjadi gangguan koneksi saat memperbarui status pelaporan.');
+      return false;
+    }
+  };
+
+  const handleSaveGtk = async (saved: DapodikGtk, isNew: boolean) => {
+    if (!sessionToken) return;
+    try {
+      const url = isNew ? '/api/gtk' : `/api/gtk/${encodeURIComponent(saved.id)}`;
+      const res = await fetch(url, {
+        method: isNew ? 'POST' : 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify(saved),
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir.');
+        return;
+      }
+      if (!res.ok) {
+        setToastMessage('Gagal menyimpan data GTK Dapodik.');
+        return;
+      }
+      const record = (await res.json()) as DapodikGtk;
+      setGtkList((prev) =>
+        isNew ? [record, ...prev] : prev.map((item) => (item.id === record.id ? record : item))
+      );
+      setToastMessage(
+        `Data GTK ${record.nama} disimpan (${record.dukcapilStatus}).`
+      );
+    } catch {
+      setToastMessage('Gagal terhubung ke server Database GTK.');
+    }
+  };
+
+  const handleDeleteGtk = async (id: string) => {
+    if (!sessionToken) return;
+    try {
+      const res = await fetch(`/api/gtk/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir.');
+        return;
+      }
+      if (res.ok) {
+        setGtkList((prev) => prev.filter((item) => item.id !== id));
+        setToastMessage('Data GTK dihapus dari database.');
+      }
+    } catch {
+      setToastMessage('Gagal menghapus data GTK.');
+    }
+  };
+
+  const handleImportGtk = async (imported: DapodikGtk[], mode: ImportMergeMode) => {
+    if (!sessionToken) return;
+    try {
+      const res = await fetch('/api/gtk/import', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ gtkList: imported, mode }),
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir.');
+        return;
+      }
+      if (!res.ok) {
+        setToastMessage('Gagal mengimpor file GTK Dapodik.');
+        return;
+      }
+      const result = (await res.json()) as {
+        gtkList: DapodikGtk[];
+        addedCount: number;
+        updatedCount: number;
+      };
+      setGtkList(result.gtkList);
+      setToastMessage(
+        `Impor GTK selesai & dipadankan Dispendukcapil: ${result.addedCount} GTK baru, ${result.updatedCount} diperbarui.`
+      );
+    } catch {
+      setToastMessage('Gagal mengimpor data GTK ke server.');
+    }
+  };
+
+  const handleBatchPadanDispendukcapil = async () => {
+    if (!sessionToken) return;
+    try {
+      const res = await fetch('/api/gtk/padan-dispendukcapil', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir.');
+        return;
+      }
+      if (res.ok) {
+        const result = (await res.json()) as {
+          gtkList: DapodikGtk[];
+          padanCount: number;
+          residuCount: number;
+          invalidCount: number;
+        };
+        setGtkList(result.gtkList);
+        setToastMessage(
+          `Padan NIK Dispendukcapil selesai: ${result.padanCount} Padan, ${result.residuCount} Residu, ${result.invalidCount} Tidak Padan NIK.`
+        );
+      }
+    } catch {
+      setToastMessage('Gagal menjalankan verifikasi padan Dispendukcapil.');
+    }
+  };
+
+  const handleSaveRombel = async (saved: DapodikRombel, isNew: boolean) => {
+    if (!sessionToken) return;
+    try {
+      const url = isNew ? '/api/rombel' : `/api/rombel/${encodeURIComponent(saved.id)}`;
+      const res = await fetch(url, {
+        method: isNew ? 'POST' : 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify(saved),
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir.');
+        return;
+      }
+      if (!res.ok) {
+        setToastMessage('Gagal menyimpan pengaturan rombel.');
+        return;
+      }
+      const record = (await res.json()) as DapodikRombel;
+      setRombels((prev) =>
+        isNew ? [...prev, record] : prev.map((item) => (item.id === record.id ? record : item))
+      );
+      setToastMessage(
+        `Setting rombel ${record.namaRombel} (Wali: ${record.waliKelasNama}) disimpan.`
+      );
+    } catch {
+      setToastMessage('Gagal terhubung ke server Rombel.');
+    }
+  };
+
+  const handleDeleteRombel = async (id: string) => {
+    if (!sessionToken) return;
+    try {
+      const res = await fetch(`/api/rombel/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir.');
+        return;
+      }
+      if (res.ok) {
+        setRombels((prev) => prev.filter((item) => item.id !== id));
+        setToastMessage('Data rombel dihapus.');
+      }
+    } catch {
+      setToastMessage('Gagal menghapus data rombel.');
+    }
+  };
+
+  const handleImportRombels = async (imported: DapodikRombel[], mode: ImportMergeMode) => {
+    if (!sessionToken) return;
+    try {
+      const res = await fetch('/api/rombel/import', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ rombels: imported, mode }),
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir.');
+        return;
+      }
+      if (!res.ok) {
+        setToastMessage('Gagal mengimpor file rombongan belajar.');
+        return;
+      }
+      const result = (await res.json()) as {
+        rombels: DapodikRombel[];
+        addedCount: number;
+        updatedCount: number;
+      };
+      setRombels(result.rombels);
+      setToastMessage(
+        `Impor rombel selesai: ${result.addedCount} baru, ${result.updatedCount} diperbarui.`
+      );
+    } catch {
+      setToastMessage('Gagal mengimpor data rombel ke server.');
+    }
+  };
+
   const targetLabelMap: Record<WorkspaceTab, string> = {
     beranda: 'Beranda Loket',
     ajukan: 'Ajukan Permohonan',
     antrean: 'Kelola Antrean',
     dapodik: 'Database Siswa Dapodik',
+    gtk: 'Database GTK Dapodik',
+    rombel: 'Setting Rombel & Wali Kelas',
     agenda: 'Buku Agenda Surat TU',
     cetak: 'Cetak Dokumen Resmi',
   };
 
   return (
-    <div className="flex min-h-screen bg-slate-50 text-slate-900">
+    <div className="print-shell flex min-h-screen bg-slate-50 text-slate-900">
       <Sidebar
         activeTab={activeTab}
         onSelectTab={handleSelectTab}
@@ -510,9 +808,13 @@ export default function App() {
           setPendingTargetTab(null);
           setTokenModalOpen(true);
         }}
+        onOpenReportingControl={() => setReportingModalOpen(true)}
+        reportingPortal={reportingPortal}
         canChangeToken={!authStatus.hasEnvToken}
         pendingCount={pendingCount}
         studentCount={students.length}
+        gtkCount={gtkList.length}
+        rombelCount={rombels.length}
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
       />
@@ -521,12 +823,15 @@ export default function App() {
         <HeaderBar
           activeTab={activeTab}
           userMode={userMode}
+          reportingOpen={reportingPortal.isOpen}
           onOpenMobileMenu={() => setMobileMenuOpen(true)}
           onQuickCreate={() => {
             setPrefillStudent(null);
+            setPrefillGtk(null);
             setActiveTab('ajukan');
           }}
           onRequestPetugasAccess={() => void requestPetugasAccess()}
+          onOpenReportingControl={() => setReportingModalOpen(true)}
         />
 
         {toastMessage && (
@@ -551,10 +856,12 @@ export default function App() {
           </div>
         )}
 
-        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 lg:px-8">
+        <main className="print-main mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 lg:px-8">
           {activeTab === 'beranda' && (
             <OverviewView
               requests={requests}
+              userMode={userMode}
+              reportingPortal={reportingPortal}
               onStartRequest={handleStartRequest}
               onSelectRequest={(req) => setInspectedRequestId(req.id)}
               onNavigateQueue={(initialQuery) => {
@@ -562,6 +869,7 @@ export default function App() {
                 setActiveTab('antrean');
               }}
               onTrackExact={handleTrackExact}
+              onOpenReportingControl={() => setReportingModalOpen(true)}
             />
           )}
 
@@ -570,9 +878,13 @@ export default function App() {
               initialServiceId={selectedServiceId}
               existingCount={requests.length}
               userMode={userMode}
+              reportingPortal={reportingPortal}
               students={students}
+              gtkList={gtkList}
               prefillStudent={prefillStudent}
+              prefillGtk={prefillGtk}
               onSubmitNewRequest={handleSubmitNewRequest}
+              onNavigateQueue={() => setActiveTab('antrean')}
             />
           )}
 
@@ -589,6 +901,7 @@ export default function App() {
             (userMode === 'petugas' && sessionToken ? (
               <DapodikDatabaseView
                 students={students}
+                rombels={rombels}
                 userMode={userMode}
                 onSaveStudent={handleSaveStudent}
                 onDeleteStudent={handleDeleteStudent}
@@ -615,6 +928,70 @@ export default function App() {
               </div>
             ))}
 
+          {activeTab === 'gtk' &&
+            (userMode === 'petugas' && sessionToken ? (
+              <GtkDatabaseView
+                gtkList={gtkList}
+                onSaveGtk={handleSaveGtk}
+                onDeleteGtk={handleDeleteGtk}
+                onImportGtk={handleImportGtk}
+                onBatchPadanDispendukcapil={handleBatchPadanDispendukcapil}
+                onCreateLetterFromGtk={handleCreateLetterFromGtk}
+              />
+            ) : (
+              <div className="rounded-xl border border-slate-200 bg-white px-6 py-16 text-center">
+                <Lock className="mx-auto h-10 w-10 text-slate-400" aria-hidden="true" />
+                <h2 className="mt-3 text-base font-semibold text-slate-900">
+                  Database GTK Dapodik Terproteksi Token
+                </h2>
+                <p className="mx-auto mt-1 max-w-md text-sm text-slate-600">
+                  Data kepegawaian, NIK, No. KK, dan padan Dispendukcapil GTK hanya dapat diakses oleh Petugas Tata Usaha.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void requestPetugasAccess('gtk')}
+                  className="mt-5 inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white hover:bg-slate-800"
+                >
+                  <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Masukkan Token Petugas TU</span>
+                </button>
+              </div>
+            ))}
+
+          {activeTab === 'rombel' &&
+            (userMode === 'petugas' && sessionToken ? (
+              <RombelWaliKelasView
+                rombels={rombels}
+                gtkList={gtkList}
+                students={students}
+                userMode={userMode}
+                onSaveRombel={handleSaveRombel}
+                onDeleteRombel={handleDeleteRombel}
+                onImportRombels={handleImportRombels}
+                onSaveStudent={handleSaveStudent}
+                onDeleteStudent={handleDeleteStudent}
+                onCreateLetterFromStudent={handleCreateLetterFromStudent}
+              />
+            ) : (
+              <div className="rounded-xl border border-slate-200 bg-white px-6 py-16 text-center">
+                <Lock className="mx-auto h-10 w-10 text-slate-400" aria-hidden="true" />
+                <h2 className="mt-3 text-base font-semibold text-slate-900">
+                  Setting Rombel & Wali Kelas Terproteksi Token
+                </h2>
+                <p className="mx-auto mt-1 max-w-md text-sm text-slate-600">
+                  Pengaturan rombongan belajar, ruang kelas, dan penugasan Wali Kelas hanya dapat diakses oleh Petugas Tata Usaha.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void requestPetugasAccess('rombel')}
+                  className="mt-5 inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white hover:bg-slate-800"
+                >
+                  <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Masukkan Token Petugas TU</span>
+                </button>
+              </div>
+            ))}
+
           {activeTab === 'agenda' &&
             (userMode === 'petugas' && sessionToken ? (
               <AgendaSuratView
@@ -622,6 +999,10 @@ export default function App() {
                 userMode={userMode}
                 onAddEntry={handleAddAgenda}
                 onDeleteEntry={handleDeleteAgenda}
+                onOpenReportPrint={() => {
+                  setPrintDocMode('laporan');
+                  setActiveTab('cetak');
+                }}
               />
             ) : (
               <div className="rounded-xl border border-slate-200 bg-white px-6 py-16 text-center">
@@ -646,6 +1027,7 @@ export default function App() {
           {activeTab === 'cetak' && (
             <DocumentPrintView
               requests={requests}
+              agendaEntries={agendaEntries}
               userMode={userMode}
               kopSurat={kopSuratConfig}
               onSaveKopSurat={handleSaveKopSurat}
@@ -701,6 +1083,13 @@ export default function App() {
           setTokenModalOpen(false);
           setToastMessage('Token masuk Petugas TU berhasil diperbarui.');
         }}
+      />
+
+      <ReportingControlModal
+        open={reportingModalOpen}
+        config={reportingPortal}
+        onClose={() => setReportingModalOpen(false)}
+        onSave={handleSaveReportingStatus}
       />
     </div>
   );
