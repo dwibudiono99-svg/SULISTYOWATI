@@ -3,13 +3,18 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import {
-  ClaimedTokenRecord,
+  buildBackupBundle,
+  type ClaimedTokenRecord,
+  type DeduplicateRepoTarget,
+  deduplicateRepository,
+  DEFAULT_BACKUP_SETTINGS,
   DEFAULT_KOP_SURAT,
   DEFAULT_REPORTING_PORTAL,
   DEFAULT_TU_STAFF,
   ensureRepositoriesInitialized,
   getRepositoryStatuses,
   isSafeRasterImageDataUrl,
+  isValidEmailAddress,
   readAgendaRepository,
   readClaimedToken,
   readGtkRepository,
@@ -17,6 +22,8 @@ import {
   readRombelsRepository,
   readSettingsRepository,
   readStudentsRepository,
+  restoreBackupBundle,
+  sanitizeBackupSettings,
   sanitizeKopSurat,
   sanitizeReportingPortal,
   sanitizeTuStaffConfig,
@@ -31,6 +38,9 @@ import {
 } from './server/repositoryStore.ts';
 import type {
   AgendaEntry,
+  BackupRepositoryKey,
+  BackupScopeKey,
+  BackupSettingsConfig,
   DapodikGtk,
   DapodikRombel,
   DapodikStudent,
@@ -42,7 +52,7 @@ import type {
 import { applyDispendukcapilCheck, formatPtkDisplayName } from './src/utils/gtkDapodikValidation.ts';
 import { normalizeRombelRecord, sortRombelsNaturally } from './src/utils/rombelDapodikUtils.ts';
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -1268,6 +1278,189 @@ async function startServer() {
       addedCount,
       updatedCount,
       repositoryUpdatedAt: envelope.updatedAt,
+    });
+  });
+
+  // Protected Backup, Restore & Email Backup Settings Routes
+  app.get('/api/backup/settings', requirePetugasAuth, (_req: Request, res: Response) => {
+    res.json(readSettingsRepository().backup);
+  });
+
+  app.put('/api/backup/settings', requirePetugasAuth, (req: Request, res: Response) => {
+    const current = readSettingsRepository();
+    const body = req.body as Partial<BackupSettingsConfig>;
+    if (!body || typeof body !== 'object') {
+      res.status(400).json({ error: 'Payload pengaturan backup email tidak valid.' });
+      return;
+    }
+
+    const rawTarget = typeof body.targetEmail === 'string' ? body.targetEmail.trim() : '';
+    if (!rawTarget || !isValidEmailAddress(rawTarget)) {
+      res.status(400).json({
+        error: 'Alamat email tujuan backup wajib diisi dengan format email yang valid.',
+      });
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const actorName = resolveActiveStaffName(current.tuStaff);
+    const { config, error } = sanitizeBackupSettings(
+      {
+        ...current.backup,
+        ...body,
+        updatedAt: nowIso,
+        updatedBy: actorName,
+      },
+      current.backup || DEFAULT_BACKUP_SETTINGS
+    );
+
+    if (error) {
+      res.status(400).json({ error });
+      return;
+    }
+
+    writeSettingsRepository({
+      ...current,
+      backup: config,
+    });
+    res.json(config);
+  });
+
+  app.get('/api/backup/export', requirePetugasAuth, (req: Request, res: Response) => {
+    const rawScope = typeof req.query.scope === 'string' ? req.query.scope.trim() : 'all';
+    const validScopes: BackupScopeKey[] = [
+      'all',
+      'requests',
+      'agenda',
+      'settings',
+      'students',
+      'gtk',
+      'rombels',
+    ];
+    const scope: BackupScopeKey = validScopes.includes(rawScope as BackupScopeKey)
+      ? (rawScope as BackupScopeKey)
+      : 'all';
+
+    const current = readSettingsRepository();
+    const actorName = resolveActiveStaffName(current.tuStaff);
+    const bundle = buildBackupBundle(scope, actorName);
+
+    if (req.query.recordTimestamp === '1') {
+      const updatedBackup: BackupSettingsConfig = {
+        ...current.backup,
+        lastBackupAt: bundle.exportedAt,
+        lastBackupBy: actorName,
+      };
+      writeSettingsRepository({
+        ...current,
+        backup: updatedBackup,
+      });
+    }
+
+    res.json(bundle);
+  });
+
+  app.post('/api/backup/restore', requirePetugasAuth, (req: Request, res: Response) => {
+    const { bundle, selectedRepos, mode } = req.body as {
+      bundle?: unknown;
+      selectedRepos?: BackupRepositoryKey[];
+      mode?: 'replace' | 'merge';
+    };
+
+    const allowedRepos: BackupRepositoryKey[] = [
+      'requests',
+      'agenda',
+      'settings',
+      'students',
+      'gtk',
+      'rombels',
+    ];
+    const cleanSelected = Array.isArray(selectedRepos)
+      ? selectedRepos.filter((k): k is BackupRepositoryKey => allowedRepos.includes(k))
+      : allowedRepos;
+
+    if (cleanSelected.length === 0) {
+      res.status(400).json({ error: 'Pilih minimal satu repositori yang akan di-restore.' });
+      return;
+    }
+
+    const restoreMode = mode === 'replace' ? 'replace' : 'merge';
+    const current = readSettingsRepository();
+    const actorName = resolveActiveStaffName(current.tuStaff);
+
+    const { summary, error } = restoreBackupBundle(bundle, cleanSelected, restoreMode, actorName);
+    if (error) {
+      res.status(400).json({ error });
+      return;
+    }
+
+    const nextSettings = readSettingsRepository();
+    res.json({
+      summary,
+      repositories: getRepositoryStatuses(),
+      data: {
+        requests: readRequestsRepository(),
+        agenda: readAgendaRepository(),
+        students: readStudentsRepository(),
+        gtkList: readGtkRepository(),
+        rombels: readRombelsRepository(),
+        kopSurat: nextSettings.kopSurat,
+        reportingPortal: nextSettings.reportingPortal,
+        tuStaff: nextSettings.tuStaff,
+        backupSettings: nextSettings.backup,
+      },
+    });
+  });
+
+  app.post('/api/backup/mark-emailed', requirePetugasAuth, (req: Request, res: Response) => {
+    const recipient = typeof req.body?.recipient === 'string' ? req.body.recipient.trim().slice(0, 180) : '';
+    const current = readSettingsRepository();
+    const actorName = resolveActiveStaffName(current.tuStaff);
+    const nowIso = new Date().toISOString();
+    const nextBackup: BackupSettingsConfig = {
+      ...current.backup,
+      lastBackupAt: nowIso,
+      lastBackupBy: actorName,
+      lastEmailSentAt: nowIso,
+      lastEmailRecipient: recipient || current.backup.targetEmail,
+    };
+    writeSettingsRepository({
+      ...current,
+      backup: nextBackup,
+    });
+    res.json(nextBackup);
+  });
+
+  app.post('/api/deduplicate', requirePetugasAuth, (req: Request, res: Response) => {
+    const { target, deleteIds } = req.body as {
+      target?: unknown;
+      deleteIds?: unknown;
+    };
+    const allowedTargets: DeduplicateRepoTarget[] = [
+      'students',
+      'gtk',
+      'rombels',
+      'requests',
+      'agenda',
+    ];
+    if (typeof target !== 'string' || !allowedTargets.includes(target as DeduplicateRepoTarget)) {
+      res.status(400).json({ error: 'Target repositori pembersihan duplikat tidak valid.' });
+      return;
+    }
+    if (!Array.isArray(deleteIds)) {
+      res.status(400).json({ error: 'Daftar ID data duplikat tidak valid.' });
+      return;
+    }
+    const cleanIds = deleteIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+    if (cleanIds.length === 0) {
+      res.status(400).json({ error: 'Pilih minimal satu data duplikat untuk dihapus.' });
+      return;
+    }
+
+    const result = deduplicateRepository(target as DeduplicateRepoTarget, cleanIds);
+    res.json({
+      target,
+      ...result,
     });
   });
 

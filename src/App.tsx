@@ -1,8 +1,10 @@
 import { CheckCircle2, Lock, X } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { AgendaSuratView } from './components/AgendaSuratView';
+import { BackupRestoreView } from './components/BackupRestoreView';
 import { DapodikDatabaseView } from './components/DapodikDatabaseView';
 import { ImportMergeMode } from './components/DapodikImportExportModal';
+import { DeduplicateModal } from './components/DeduplicateModal';
 import { DocumentPrintView, PrintDocumentMode } from './components/DocumentPrintView';
 import { GtkDatabaseView } from './components/GtkDatabaseView';
 import { HeaderBar } from './components/HeaderBar';
@@ -16,6 +18,7 @@ import { Sidebar } from './components/Sidebar';
 import { SubmitRequestView } from './components/SubmitRequestView';
 import { TuStaffSettingsModal } from './components/TuStaffSettingsModal';
 import {
+  DEFAULT_BACKUP_SETTINGS_CONFIG,
   DEFAULT_KOP_SURAT_CONFIG,
   DEFAULT_REPORTING_PORTAL_CONFIG,
   DEFAULT_TU_STAFF_CONFIG,
@@ -23,12 +26,17 @@ import {
 } from './config/schoolConfig';
 import {
   AgendaEntry,
+  BackupBundlePayload,
+  BackupRepositoryKey,
+  BackupScopeKey,
+  BackupSettingsConfig,
   DapodikGtk,
   DapodikRombel,
   DapodikStudent,
   KopSuratConfig,
   PublicTuStaffInfo,
   ReportingPortalConfig,
+  RepositoryStatusItem,
   RequestStatus,
   ServiceCategoryId,
   ServiceRequest,
@@ -36,8 +44,9 @@ import {
   UserMode,
   WorkspaceTab,
 } from './types/tu';
+import { DeduplicateTarget } from './utils/deduplicationUtils';
 
-const PROTECTED_TABS = new Set<WorkspaceTab>(['dapodik', 'gtk', 'rombel', 'agenda']);
+const PROTECTED_TABS = new Set<WorkspaceTab>(['dapodik', 'gtk', 'rombel', 'agenda', 'backup']);
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('beranda');
@@ -56,6 +65,8 @@ export default function App() {
   const [pendingTargetTab, setPendingTargetTab] = useState<WorkspaceTab | null>(null);
   const [reportingModalOpen, setReportingModalOpen] = useState(false);
   const [tuStaffModalOpen, setTuStaffModalOpen] = useState(false);
+  const [dedupModalTarget, setDedupModalTarget] = useState<DeduplicateTarget | null>(null);
+  const [dedupAllowSwitch, setDedupAllowSwitch] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
@@ -68,6 +79,10 @@ export default function App() {
     DEFAULT_REPORTING_PORTAL_CONFIG
   );
   const [tuStaffConfig, setTuStaffConfig] = useState<TuStaffConfig>(DEFAULT_TU_STAFF_CONFIG);
+  const [backupSettings, setBackupSettings] = useState<BackupSettingsConfig>(
+    DEFAULT_BACKUP_SETTINGS_CONFIG
+  );
+  const [repositoryStatuses, setRepositoryStatuses] = useState<RepositoryStatusItem[]>([]);
 
   const [selectedServiceId, setSelectedServiceId] = useState<ServiceCategoryId>('surat-aktif');
   const [prefillStudent, setPrefillStudent] = useState<DapodikStudent | null>(null);
@@ -159,6 +174,8 @@ export default function App() {
       setGtkList([]);
       setRombels([]);
       setAgendaEntries([]);
+      setRepositoryStatuses([]);
+      setBackupSettings(DEFAULT_BACKUP_SETTINGS_CONFIG);
       setPrefillStudent(null);
       setPrefillGtk(null);
       setActiveTab((curr) => (PROTECTED_TABS.has(curr) ? 'beranda' : curr));
@@ -175,14 +192,17 @@ export default function App() {
     async (token: string) => {
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        const [reqRes, stuRes, gtkRes, rombelRes, agRes, tuStaffRes] = await Promise.all([
-          fetch('/api/requests', { headers }),
-          fetch('/api/students', { headers }),
-          fetch('/api/gtk', { headers }),
-          fetch('/api/rombel', { headers }),
-          fetch('/api/agenda', { headers }),
-          fetch('/api/tu-staff/settings', { headers }),
-        ]);
+        const [reqRes, stuRes, gtkRes, rombelRes, agRes, tuStaffRes, backupSetRes, repoStatRes] =
+          await Promise.all([
+            fetch('/api/requests', { headers }),
+            fetch('/api/students', { headers }),
+            fetch('/api/gtk', { headers }),
+            fetch('/api/rombel', { headers }),
+            fetch('/api/agenda', { headers }),
+            fetch('/api/tu-staff/settings', { headers }),
+            fetch('/api/backup/settings', { headers }),
+            fetch('/api/repositories/status', { headers }),
+          ]);
 
         if (
           reqRes.status === 401 ||
@@ -190,7 +210,9 @@ export default function App() {
           gtkRes.status === 401 ||
           rombelRes.status === 401 ||
           agRes.status === 401 ||
-          tuStaffRes.status === 401
+          tuStaffRes.status === 401 ||
+          backupSetRes.status === 401 ||
+          repoStatRes.status === 401
         ) {
           handleLockToPemohon('Sesi Petugas TU berakhir. Silakan verifikasi token kembali.');
           return;
@@ -202,6 +224,15 @@ export default function App() {
         if (rombelRes.ok) setRombels((await rombelRes.json()) as DapodikRombel[]);
         if (agRes.ok) setAgendaEntries((await agRes.json()) as AgendaEntry[]);
         if (tuStaffRes.ok) setTuStaffConfig((await tuStaffRes.json()) as TuStaffConfig);
+        if (backupSetRes.ok) setBackupSettings((await backupSetRes.json()) as BackupSettingsConfig);
+        if (repoStatRes.ok) {
+          const statPayload = (await repoStatRes.json()) as {
+            repositories?: RepositoryStatusItem[];
+          };
+          if (Array.isArray(statPayload.repositories)) {
+            setRepositoryStatuses(statPayload.repositories);
+          }
+        }
       } catch {
         setToastMessage('Gagal memuat data Petugas TU dari server.');
       }
@@ -257,7 +288,13 @@ export default function App() {
       return;
     }
     setActiveTab(tab);
-    if (tab === 'beranda' || tab === 'antrean' || tab === 'agenda' || tab === 'cetak') {
+    if (
+      tab === 'beranda' ||
+      tab === 'antrean' ||
+      tab === 'agenda' ||
+      tab === 'cetak' ||
+      tab === 'backup'
+    ) {
       void refreshCurrentRequests();
     }
   };
@@ -975,6 +1012,235 @@ export default function App() {
     }
   };
 
+  const handleRefreshRepositoryStatuses = async () => {
+    if (!sessionToken) return;
+    await loadProtectedData(sessionToken);
+    setToastMessage('Status 6 repositori database berhasil disegarkan.');
+  };
+
+  const handleExportBackupBundle = async (
+    scope: BackupScopeKey,
+    recordTimestamp = true
+  ): Promise<BackupBundlePayload | null> => {
+    if (!sessionToken) {
+      void requestPetugasAccess('backup');
+      return null;
+    }
+    try {
+      const qs = new URLSearchParams({
+        scope,
+        ...(recordTimestamp ? { recordTimestamp: '1' } : {}),
+      });
+      const res = await fetch(`/api/backup/export?${qs.toString()}`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir.');
+        return null;
+      }
+      if (!res.ok) {
+        setToastMessage('Gagal mengekspor bundel backup dari server.');
+        return null;
+      }
+      const bundle = (await res.json()) as BackupBundlePayload;
+      if (recordTimestamp) {
+        setBackupSettings((prev) => ({
+          ...prev,
+          lastBackupAt: bundle.exportedAt,
+          lastBackupBy: bundle.exportedBy,
+        }));
+      }
+      return bundle;
+    } catch {
+      setToastMessage('Terjadi gangguan koneksi saat mengambil data backup.');
+      return null;
+    }
+  };
+
+  const handleRestoreBackupBundle = async (
+    bundle: unknown,
+    selectedRepos: BackupRepositoryKey[],
+    mode: 'replace' | 'merge'
+  ): Promise<{ ok: boolean; message?: string }> => {
+    if (!sessionToken) {
+      void requestPetugasAccess('backup');
+      return { ok: false, message: 'Sesi Petugas TU belum aktif.' };
+    }
+    try {
+      const res = await fetch('/api/backup/restore', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ bundle, selectedRepos, mode }),
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir.');
+        return { ok: false, message: 'Sesi Petugas TU berakhir.' };
+      }
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+        return {
+          ok: false,
+          message: errBody?.error || 'Gagal memulihkan database dari file backup.',
+        };
+      }
+      const result = (await res.json()) as {
+        summary: { restoredKeys: BackupRepositoryKey[] };
+        repositories: RepositoryStatusItem[];
+        data: {
+          requests: ServiceRequest[];
+          agenda: AgendaEntry[];
+          students: DapodikStudent[];
+          gtkList: DapodikGtk[];
+          rombels: DapodikRombel[];
+          kopSurat: KopSuratConfig;
+          reportingPortal: ReportingPortalConfig;
+          tuStaff: TuStaffConfig;
+          backupSettings: BackupSettingsConfig;
+        };
+      };
+      setRequests(result.data.requests);
+      setAgendaEntries(result.data.agenda);
+      setStudents(result.data.students);
+      setGtkList(result.data.gtkList);
+      setRombels(result.data.rombels);
+      setKopSuratConfig(result.data.kopSurat);
+      setReportingPortal(result.data.reportingPortal);
+      setTuStaffConfig(result.data.tuStaff);
+      setBackupSettings(result.data.backupSettings);
+      setRepositoryStatuses(result.repositories);
+      const msg = `Restore selesai (${result.summary.restoredKeys.length} repositori berhasil dipulihkan).`;
+      setToastMessage(msg);
+      return { ok: true, message: msg };
+    } catch {
+      return {
+        ok: false,
+        message: 'Terjadi gangguan koneksi saat mengirim data restore ke server.',
+      };
+    }
+  };
+
+  const handleSaveBackupSettings = async (
+    next: Partial<BackupSettingsConfig>
+  ): Promise<boolean> => {
+    if (!sessionToken) {
+      void requestPetugasAccess('backup');
+      return false;
+    }
+    try {
+      const res = await fetch('/api/backup/settings', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify(next),
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir.');
+        return false;
+      }
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+        setToastMessage(errBody?.error || 'Gagal menyimpan pengaturan email backup.');
+        return false;
+      }
+      const saved = (await res.json()) as BackupSettingsConfig;
+      setBackupSettings(saved);
+      setToastMessage(`Email tujuan backup (${saved.targetEmail}) berhasil disimpan.`);
+      return true;
+    } catch {
+      setToastMessage('Terjadi gangguan koneksi saat menyimpan pengaturan email backup.');
+      return false;
+    }
+  };
+
+  const handleMarkBackupEmailed = async (recipient: string): Promise<void> => {
+    if (!sessionToken) return;
+    try {
+      const res = await fetch('/api/backup/mark-emailed', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ recipient }),
+      });
+      if (res.ok) {
+        const saved = (await res.json()) as BackupSettingsConfig;
+        setBackupSettings(saved);
+        setToastMessage(`Backup berhasil dikirim & disimpan ke email ${recipient}.`);
+      }
+    } catch {
+      // Non-fatal metadata update
+    }
+  };
+
+  const openDeduplicateModal = (target: DeduplicateTarget, allowSwitch = false) => {
+    if (!sessionToken) {
+      void requestPetugasAccess(activeTab);
+      return;
+    }
+    setDedupAllowSwitch(allowSwitch);
+    setDedupModalTarget(target);
+  };
+
+  const handleDeduplicateRecords = async (
+    target: DeduplicateTarget,
+    deleteIds: string[]
+  ): Promise<boolean> => {
+    if (!sessionToken) return false;
+    try {
+      const res = await fetch('/api/deduplicate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ target, deleteIds }),
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir.');
+        return false;
+      }
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+        setToastMessage(errBody?.error || 'Gagal menghapus data duplikat.');
+        return false;
+      }
+      const result = (await res.json()) as {
+        target: DeduplicateTarget;
+        deletedCount: number;
+        remainingCount: number;
+        items: unknown[];
+        tuStaff?: TuStaffConfig;
+      };
+
+      if (result.target === 'students') {
+        setStudents(result.items as DapodikStudent[]);
+      } else if (result.target === 'gtk') {
+        setGtkList(result.items as DapodikGtk[]);
+        if (result.tuStaff) setTuStaffConfig(result.tuStaff);
+      } else if (result.target === 'rombels') {
+        setRombels(result.items as DapodikRombel[]);
+      } else if (result.target === 'requests') {
+        setRequests(result.items as ServiceRequest[]);
+      } else if (result.target === 'agenda') {
+        setAgendaEntries(result.items as AgendaEntry[]);
+      }
+
+      setToastMessage(
+        `${result.deletedCount} data duplikat berhasil dihapus dari repositori (tersisa ${result.remainingCount} data).`
+      );
+      return true;
+    } catch {
+      setToastMessage('Terjadi gangguan koneksi saat menghapus data duplikat.');
+      return false;
+    }
+  };
+
   const targetLabelMap: Record<WorkspaceTab, string> = {
     beranda: 'Beranda Loket',
     ajukan: 'Ajukan Permohonan',
@@ -984,6 +1250,7 @@ export default function App() {
     rombel: 'Setting Rombel & Wali Kelas',
     agenda: 'Buku Agenda Surat TU',
     cetak: 'Cetak Dokumen Resmi',
+    backup: 'Backup, Restore, Import/Export & Email',
   };
 
   return (
@@ -1102,6 +1369,9 @@ export default function App() {
               onNavigateCreate={() => setActiveTab('ajukan')}
               onTrackExact={handleTrackExact}
               onRefresh={refreshCurrentRequests}
+              onOpenDeduplicate={
+                userMode === 'petugas' ? () => openDeduplicateModal('requests', false) : undefined
+              }
             />
           )}
 
@@ -1115,6 +1385,7 @@ export default function App() {
                 onDeleteStudent={handleDeleteStudent}
                 onImportStudents={handleImportStudents}
                 onCreateLetterFromStudent={handleCreateLetterFromStudent}
+                onOpenDeduplicate={() => openDeduplicateModal('students', false)}
               />
             ) : (
               <div className="rounded-xl border border-slate-200 bg-white px-6 py-16 text-center">
@@ -1146,6 +1417,7 @@ export default function App() {
                 onBatchPadanDispendukcapil={handleBatchPadanDispendukcapil}
                 onCreateLetterFromGtk={handleCreateLetterFromGtk}
                 onOpenTuStaffSettings={() => setTuStaffModalOpen(true)}
+                onOpenDeduplicate={() => openDeduplicateModal('gtk', false)}
               />
             ) : (
               <div className="rounded-xl border border-slate-200 bg-white px-6 py-16 text-center">
@@ -1180,6 +1452,7 @@ export default function App() {
                 onSaveStudent={handleSaveStudent}
                 onDeleteStudent={handleDeleteStudent}
                 onCreateLetterFromStudent={handleCreateLetterFromStudent}
+                onOpenDeduplicate={() => openDeduplicateModal('rombels', false)}
               />
             ) : (
               <div className="rounded-xl border border-slate-200 bg-white px-6 py-16 text-center">
@@ -1212,6 +1485,7 @@ export default function App() {
                   setPrintDocMode('laporan');
                   setActiveTab('cetak');
                 }}
+                onOpenDeduplicate={() => openDeduplicateModal('agenda', false)}
               />
             ) : (
               <div className="rounded-xl border border-slate-200 bg-white px-6 py-16 text-center">
@@ -1245,6 +1519,47 @@ export default function App() {
               initialDocMode={printDocMode}
             />
           )}
+
+          {activeTab === 'backup' &&
+            (userMode === 'petugas' && sessionToken ? (
+              <BackupRestoreView
+                sessionToken={sessionToken}
+                requests={requests}
+                agendaEntries={agendaEntries}
+                students={students}
+                gtkList={gtkList}
+                rombels={rombels}
+                backupSettings={backupSettings}
+                repositoryStatuses={repositoryStatuses}
+                onRefreshStatuses={handleRefreshRepositoryStatuses}
+                onExportBundle={handleExportBackupBundle}
+                onRestoreBundle={handleRestoreBackupBundle}
+                onSaveBackupSettings={handleSaveBackupSettings}
+                onMarkBackupEmailed={handleMarkBackupEmailed}
+                onImportStudents={handleImportStudents}
+                onImportGtk={handleImportGtk}
+                onImportRombels={handleImportRombels}
+                onOpenDeduplicate={() => openDeduplicateModal('students', true)}
+              />
+            ) : (
+              <div className="rounded-xl border border-slate-200 bg-white px-6 py-16 text-center">
+                <Lock className="mx-auto h-10 w-10 text-slate-400" aria-hidden="true" />
+                <h2 className="mt-3 text-base font-semibold text-slate-900">
+                  Backup, Restore & Email Terproteksi Token
+                </h2>
+                <p className="mx-auto mt-1 max-w-md text-sm text-slate-600">
+                  Menu pencadangan, pemulihan database, impor/ekspor terpadu, dan pengiriman backup email hanya dapat dibuka oleh Petugas Tata Usaha.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void requestPetugasAccess('backup')}
+                  className="mt-5 inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white hover:bg-slate-800"
+                >
+                  <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Masukkan Token Petugas TU</span>
+                </button>
+              </div>
+            ))}
         </main>
 
         <footer className="no-print border-t border-slate-200 bg-white px-4 py-4 text-xs text-slate-500 sm:px-6 lg:px-8">
@@ -1319,6 +1634,19 @@ export default function App() {
         onClose={() => setTuStaffModalOpen(false)}
         onSave={handleSaveTuStaff}
         onOpenGtkDatabase={() => setActiveTab('gtk')}
+      />
+
+      <DeduplicateModal
+        open={dedupModalTarget !== null}
+        initialTarget={dedupModalTarget ?? 'students'}
+        allowSwitchTarget={dedupAllowSwitch}
+        students={students}
+        gtkList={gtkList}
+        rombels={rombels}
+        requests={requests}
+        agendaEntries={agendaEntries}
+        onClose={() => setDedupModalTarget(null)}
+        onConfirmDelete={handleDeduplicateRecords}
       />
     </div>
   );

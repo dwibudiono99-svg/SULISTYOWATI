@@ -1,4 +1,5 @@
 import {
+  ArchiveRestore,
   ArrowRightLeft,
   BookOpenCheck,
   Database,
@@ -50,6 +51,7 @@ const PROTECTED_SHORTCUTS: { id: WorkspaceTab; label: string; icon: typeof Datab
   { id: 'gtk', label: 'Database GTK Dapodik', icon: Users },
   { id: 'rombel', label: 'Setting Rombel & Wali', icon: School },
   { id: 'agenda', label: 'Agenda Surat TU', icon: BookOpenCheck },
+  { id: 'backup', label: 'Backup, Restore & Email', icon: ArchiveRestore },
 ];
 
 const PETUGAS_NAV: { id: WorkspaceTab; label: string; icon: typeof LayoutDashboard }[] = [
@@ -61,6 +63,7 @@ const PETUGAS_NAV: { id: WorkspaceTab; label: string; icon: typeof LayoutDashboa
   { id: 'agenda', label: 'Agenda Surat TU', icon: BookOpenCheck },
   { id: 'ajukan', label: 'Buat Permohonan', icon: FilePlus2 },
   { id: 'cetak', label: 'Cetak Dokumen', icon: Printer },
+  { id: 'backup', label: 'Backup, Restore & Email', icon: ArchiveRestore },
 ];
 
 export function Sidebar({

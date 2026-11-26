@@ -5,6 +5,7 @@ import {
   FileSpreadsheet,
   Plus,
   Search,
+  Sparkles,
   Upload,
   XCircle,
 } from 'lucide-react';
@@ -16,6 +17,7 @@ import {
   ServiceCategoryId,
   UserMode,
 } from '../types/tu';
+import { findDuplicateStudents } from '../utils/deduplicationUtils';
 import { validateDapodikStudent } from '../utils/dapodikValidation';
 import { normalizeRombelKey, sortRombelsNaturally } from '../utils/rombelDapodikUtils';
 import {
@@ -32,6 +34,7 @@ interface DapodikDatabaseViewProps {
   onDeleteStudent: (id: string) => void;
   onImportStudents: (imported: DapodikStudent[], mode: ImportMergeMode) => Promise<boolean | void> | void;
   onCreateLetterFromStudent: (student: DapodikStudent, serviceId: ServiceCategoryId) => void;
+  onOpenDeduplicate?: () => void;
 }
 
 export function DapodikDatabaseView({
@@ -42,6 +45,7 @@ export function DapodikDatabaseView({
   onDeleteStudent,
   onImportStudents,
   onCreateLetterFromStudent,
+  onOpenDeduplicate,
 }: DapodikDatabaseViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [gradeFilter, setGradeFilter] = useState<'ALL' | 'X' | 'XI' | 'XII' | 'Alumni'>('ALL');
@@ -58,6 +62,11 @@ export function DapodikDatabaseView({
         student: s,
         validation: validateDapodikStudent(s),
       })),
+    [students]
+  );
+
+  const duplicateGroupsCount = useMemo(
+    () => findDuplicateStudents(students, 'all').length,
     [students]
   );
 
@@ -226,6 +235,22 @@ export function DapodikDatabaseView({
               <Download className="h-3.5 w-3.5" aria-hidden="true" />
               <span>Ekspor & Template</span>
             </button>
+            {onOpenDeduplicate && (
+              <button
+                type="button"
+                onClick={onOpenDeduplicate}
+                className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold whitespace-nowrap ${
+                  duplicateGroupsCount > 0
+                    ? 'border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
+                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <Sparkles className="h-3.5 w-3.5 text-amber-600" aria-hidden="true" />
+                <span>
+                  Hapus Duplikat{duplicateGroupsCount > 0 ? ` (${duplicateGroupsCount})` : ''}
+                </span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setCreatingNew(true)}

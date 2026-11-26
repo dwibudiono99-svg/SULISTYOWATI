@@ -10,12 +10,14 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Sparkles,
   Upload,
   User,
   XCircle,
 } from 'lucide-react';
 import { ChangeEvent, useMemo, useRef, useState } from 'react';
 import { DapodikGtk, DukcapilMatchStatus } from '../types/tu';
+import { findDuplicateGtk } from '../utils/deduplicationUtils';
 import {
   formatPtkDisplayName,
   padankanNikDispendukcapil,
@@ -33,6 +35,7 @@ interface GtkDatabaseViewProps {
   onBatchPadanDispendukcapil: () => Promise<void>;
   onCreateLetterFromGtk: (gtk: DapodikGtk) => void;
   onOpenTuStaffSettings?: () => void;
+  onOpenDeduplicate?: () => void;
 }
 
 type KepegawaianFilter = 'ALL' | 'PNS' | 'PPPK' | 'PPPK Paruh Waktu' | 'NON-ASN';
@@ -56,6 +59,7 @@ export function GtkDatabaseView({
   onBatchPadanDispendukcapil,
   onCreateLetterFromGtk,
   onOpenTuStaffSettings,
+  onOpenDeduplicate,
 }: GtkDatabaseViewProps) {
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [searchQuery, setSearchQuery] = useState('');
@@ -77,6 +81,11 @@ export function GtkDatabaseView({
         displayName: formatPtkDisplayName(gtk),
         check: padankanNikDispendukcapil(gtk),
       })),
+    [gtkList]
+  );
+
+  const duplicateGroupsCount = useMemo(
+    () => findDuplicateGtk(gtkList, 'all').length,
     [gtkList]
   );
 
@@ -285,6 +294,22 @@ export function GtkDatabaseView({
               <Download className="h-3.5 w-3.5" aria-hidden="true" />
               <span>Ekspor</span>
             </button>
+            {onOpenDeduplicate && (
+              <button
+                type="button"
+                onClick={onOpenDeduplicate}
+                className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold whitespace-nowrap ${
+                  duplicateGroupsCount > 0
+                    ? 'border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
+                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <Sparkles className="h-3.5 w-3.5 text-amber-600" aria-hidden="true" />
+                <span>
+                  Hapus Duplikat{duplicateGroupsCount > 0 ? ` (${duplicateGroupsCount})` : ''}
+                </span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setCreatingNew(true)}

@@ -1,4 +1,10 @@
-import { KopSuratConfig, ReportingPortalConfig, ServiceCatalogItem, TuStaffConfig } from '../types/tu';
+import {
+  BackupSettingsConfig,
+  KopSuratConfig,
+  ReportingPortalConfig,
+  ServiceCatalogItem,
+  TuStaffConfig,
+} from '../types/tu';
 
 export const SCHOOL_INFO = {
   province: 'PEMERINTAH PROVINSI JAWA TIMUR',
@@ -55,6 +61,20 @@ export const DEFAULT_TU_STAFF_CONFIG: TuStaffConfig = {
   activeStaffPhoto: SCHOOL_INFO.staffAvatar,
   deactivatedReason: '',
   operators: [],
+  updatedAt: '2026-11-25T07:00:00+07:00',
+  updatedBy: SCHOOL_INFO.staffName,
+};
+
+export const DEFAULT_BACKUP_SETTINGS_CONFIG: BackupSettingsConfig = {
+  targetEmail: SCHOOL_INFO.email,
+  ccEmail: '',
+  subjectPrefix: '[Backup SIP TU SMAN 9 Surabaya]',
+  defaultScope: 'all',
+  includeAttachmentFormat: 'json',
+  lastBackupAt: '',
+  lastBackupBy: '',
+  lastEmailSentAt: '',
+  lastEmailRecipient: '',
   updatedAt: '2026-11-25T07:00:00+07:00',
   updatedBy: SCHOOL_INFO.staffName,
 };

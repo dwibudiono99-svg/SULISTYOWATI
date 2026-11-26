@@ -2,6 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type {
   AgendaEntry,
+  BackupBundlePayload,
+  BackupRepositoryKey,
+  BackupScopeKey,
+  BackupSettingsConfig,
   DapodikGtk,
   DapodikRombel,
   DapodikStudent,
@@ -71,6 +75,20 @@ export const DEFAULT_TU_STAFF: TuStaffConfig = {
   updatedBy: 'Sulistyowati, S.Pd.',
 };
 
+export const DEFAULT_BACKUP_SETTINGS: BackupSettingsConfig = {
+  targetEmail: 'smanixsurabaya@gmail.com',
+  ccEmail: '',
+  subjectPrefix: '[Backup SIP TU SMAN 9 Surabaya]',
+  defaultScope: 'all',
+  includeAttachmentFormat: 'json',
+  lastBackupAt: '',
+  lastBackupBy: '',
+  lastEmailSentAt: '',
+  lastEmailRecipient: '',
+  updatedAt: '2026-11-25T07:00:00+07:00',
+  updatedBy: 'Sulistyowati, S.Pd.',
+};
+
 export interface ClaimedTokenRecord {
   salt: string;
   hash: string;
@@ -81,6 +99,7 @@ export interface PersuratanSettingsData {
   kopSurat: KopSuratConfig;
   reportingPortal: ReportingPortalConfig;
   tuStaff?: TuStaffConfig;
+  backup?: BackupSettingsConfig;
 }
 
 export interface RepositoryEnvelope<T> {
@@ -199,6 +218,82 @@ export function sanitizeReportingPortal(
       typeof raw.updatedBy === 'string' && raw.updatedBy.trim()
         ? raw.updatedBy.trim().slice(0, 120)
         : fallback.updatedBy,
+  };
+}
+
+const VALID_BACKUP_SCOPES = new Set<BackupScopeKey>([
+  'all',
+  'requests',
+  'agenda',
+  'settings',
+  'students',
+  'gtk',
+  'rombels',
+]);
+
+export function isValidEmailAddress(email: string): boolean {
+  return /^[^\s@<>()[\]\\,;:\s@"]+@[^\s@<>()[\]\\,;:\s@"]+\.[^\s@<>()[\]\\,;:\s@"]{2,}$/.test(
+    email.trim()
+  );
+}
+
+export function sanitizeBackupSettings(
+  input: unknown,
+  fallback: BackupSettingsConfig = DEFAULT_BACKUP_SETTINGS
+): { config: BackupSettingsConfig; error?: string } {
+  if (!input || typeof input !== 'object') {
+    return { config: fallback };
+  }
+  const raw = input as Partial<BackupSettingsConfig>;
+  const targetEmail =
+    typeof raw.targetEmail === 'string' ? raw.targetEmail.trim().slice(0, 180) : fallback.targetEmail;
+  const ccEmail =
+    typeof raw.ccEmail === 'string' ? raw.ccEmail.trim().slice(0, 180) : fallback.ccEmail;
+
+  if (targetEmail && !isValidEmailAddress(targetEmail)) {
+    return { config: fallback, error: 'Format alamat email tujuan backup tidak valid.' };
+  }
+  if (ccEmail && !isValidEmailAddress(ccEmail)) {
+    return { config: fallback, error: 'Format alamat email CC tidak valid.' };
+  }
+
+  const defaultScope: BackupScopeKey =
+    typeof raw.defaultScope === 'string' && VALID_BACKUP_SCOPES.has(raw.defaultScope as BackupScopeKey)
+      ? (raw.defaultScope as BackupScopeKey)
+      : fallback.defaultScope;
+
+  const includeAttachmentFormat =
+    raw.includeAttachmentFormat === 'both' ? 'both' : 'json';
+
+  return {
+    config: {
+      targetEmail,
+      ccEmail,
+      subjectPrefix:
+        typeof raw.subjectPrefix === 'string' && raw.subjectPrefix.trim()
+          ? raw.subjectPrefix.trim().slice(0, 120)
+          : fallback.subjectPrefix,
+      defaultScope,
+      includeAttachmentFormat,
+      lastBackupAt:
+        typeof raw.lastBackupAt === 'string' ? raw.lastBackupAt.slice(0, 64) : fallback.lastBackupAt,
+      lastBackupBy:
+        typeof raw.lastBackupBy === 'string' ? raw.lastBackupBy.slice(0, 160) : fallback.lastBackupBy,
+      lastEmailSentAt:
+        typeof raw.lastEmailSentAt === 'string'
+          ? raw.lastEmailSentAt.slice(0, 64)
+          : fallback.lastEmailSentAt,
+      lastEmailRecipient:
+        typeof raw.lastEmailRecipient === 'string'
+          ? raw.lastEmailRecipient.slice(0, 180)
+          : fallback.lastEmailRecipient,
+      updatedAt:
+        typeof raw.updatedAt === 'string' && raw.updatedAt ? raw.updatedAt : new Date().toISOString(),
+      updatedBy:
+        typeof raw.updatedBy === 'string' && raw.updatedBy.trim()
+          ? raw.updatedBy.trim().slice(0, 160)
+          : fallback.updatedBy,
+    },
   };
 }
 
@@ -495,7 +590,15 @@ export function ensureRepositoriesInitialized(): void {
     const tuStaffRes = legacy?.tuStaff
       ? sanitizeTuStaffConfig(legacy.tuStaff, currentGtk, DEFAULT_TU_STAFF)
       : DEFAULT_TU_STAFF;
-    writeSettingsRepository({ kopSurat: kopRes, reportingPortal: portalRes, tuStaff: tuStaffRes });
+    const backupRes = legacy?.backup
+      ? sanitizeBackupSettings(legacy.backup, DEFAULT_BACKUP_SETTINGS).config
+      : DEFAULT_BACKUP_SETTINGS;
+    writeSettingsRepository({
+      kopSurat: kopRes,
+      reportingPortal: portalRes,
+      tuStaff: tuStaffRes,
+      backup: backupRes,
+    });
   }
 
   if (!fs.existsSync(AUTH_STORE_PATH) && legacy?.claimedToken) {
@@ -568,12 +671,19 @@ export function writeAgendaRepository(agenda: AgendaEntry[]): RepositoryEnvelope
 }
 
 // --- Persuratan: Pengaturan Kop Surat, Portal Pelaporan & Petugas TU ---
-export function readSettingsRepository(): PersuratanSettingsData & { tuStaff: TuStaffConfig } {
+export function readSettingsRepository(): PersuratanSettingsData & {
+  tuStaff: TuStaffConfig;
+  backup: BackupSettingsConfig;
+} {
   ensureRepositoriesInitialized();
-  const fallback: PersuratanSettingsData & { tuStaff: TuStaffConfig } = {
+  const fallback: PersuratanSettingsData & {
+    tuStaff: TuStaffConfig;
+    backup: BackupSettingsConfig;
+  } = {
     kopSurat: DEFAULT_KOP_SURAT,
     reportingPortal: DEFAULT_REPORTING_PORTAL,
     tuStaff: DEFAULT_TU_STAFF,
+    backup: DEFAULT_BACKUP_SETTINGS,
   };
   const env = readEnvelope<PersuratanSettingsData>(
     REPOSITORY_FILES.settings,
@@ -587,6 +697,7 @@ export function readSettingsRepository(): PersuratanSettingsData & { tuStaff: Tu
     kopSurat: sanitizeKopSurat(env.data?.kopSurat, DEFAULT_KOP_SURAT).config,
     reportingPortal: sanitizeReportingPortal(env.data?.reportingPortal, DEFAULT_REPORTING_PORTAL),
     tuStaff: sanitizeTuStaffConfig(env.data?.tuStaff, gtkList, DEFAULT_TU_STAFF),
+    backup: sanitizeBackupSettings(env.data?.backup, DEFAULT_BACKUP_SETTINGS).config,
   };
 }
 
@@ -706,4 +817,456 @@ export function getRepositoryStatuses(): RepositoryStatusItem[] {
       };
     }
   });
+}
+
+export function buildBackupBundle(
+  scope: BackupScopeKey = 'all',
+  exportedBy = 'Petugas Tata Usaha'
+): BackupBundlePayload {
+  ensureRepositoriesInitialized();
+  const includeAll = scope === 'all';
+  const requests = includeAll || scope === 'requests' ? readRequestsRepository() : undefined;
+  const agenda = includeAll || scope === 'agenda' ? readAgendaRepository() : undefined;
+  const settings = includeAll || scope === 'settings' ? readSettingsRepository() : undefined;
+  const students = includeAll || scope === 'students' ? readStudentsRepository() : undefined;
+  const gtk = includeAll || scope === 'gtk' ? readGtkRepository() : undefined;
+  const rombels = includeAll || scope === 'rombels' ? readRombelsRepository() : undefined;
+
+  return {
+    app: 'SIP-TU-SMAN9-SBY',
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    exportedBy,
+    scope,
+    counts: {
+      requests: requests?.length ?? 0,
+      agenda: agenda?.length ?? 0,
+      students: students?.length ?? 0,
+      gtk: gtk?.length ?? 0,
+      rombels: rombels?.length ?? 0,
+      settings: settings ? 1 : 0,
+    },
+    repositories: {
+      ...(requests !== undefined ? { requests } : {}),
+      ...(agenda !== undefined ? { agenda } : {}),
+      ...(settings !== undefined ? { settings } : {}),
+      ...(students !== undefined ? { students } : {}),
+      ...(gtk !== undefined ? { gtk } : {}),
+      ...(rombels !== undefined ? { rombels } : {}),
+    },
+  };
+}
+
+export interface RestoreResultSummary {
+  restoredKeys: BackupRepositoryKey[];
+  counts: Record<BackupRepositoryKey, number>;
+  restoredAt: string;
+}
+
+function extractRepositoriesFromInput(
+  rawInput: unknown
+): BackupBundlePayload['repositories'] | null {
+  if (!rawInput || typeof rawInput !== 'object') return null;
+  const obj = rawInput as Record<string, unknown>;
+
+  if (obj.repositories && typeof obj.repositories === 'object') {
+    return obj.repositories as BackupBundlePayload['repositories'];
+  }
+
+  // Also support single-file RepositoryEnvelope exported directly from database/*.json
+  if (typeof obj.repository === 'string' && obj.data !== undefined) {
+    const repoMap: Record<string, BackupRepositoryKey> = {
+      'persuratan-permohonan': 'requests',
+      'persuratan-agenda': 'agenda',
+      'persuratan-pengaturan': 'settings',
+      'dapodik-siswa': 'students',
+      'dapodik-gtk': 'gtk',
+      'dapodik-rombel': 'rombels',
+    };
+    const matchedKey = repoMap[obj.repository];
+    if (matchedKey) {
+      return { [matchedKey]: obj.data } as BackupBundlePayload['repositories'];
+    }
+  }
+
+  return null;
+}
+
+export function restoreBackupBundle(
+  bundleInput: unknown,
+  selectedRepos: BackupRepositoryKey[],
+  mode: 'replace' | 'merge',
+  actorName: string
+): { summary: RestoreResultSummary; error?: string } {
+  const repos = extractRepositoriesFromInput(bundleInput);
+  if (!repos) {
+    return {
+      summary: {
+        restoredKeys: [],
+        counts: { requests: 0, agenda: 0, settings: 0, students: 0, gtk: 0, rombels: 0 },
+        restoredAt: new Date().toISOString(),
+      },
+      error: 'Format file backup JSON tidak dikenali. Gunakan file hasil ekspor SIP TU SMAN 9 Surabaya.',
+    };
+  }
+
+  const allowedSet = new Set<BackupRepositoryKey>(selectedRepos);
+  const restoredKeys: BackupRepositoryKey[] = [];
+  const counts: Record<BackupRepositoryKey, number> = {
+    requests: 0,
+    agenda: 0,
+    settings: 0,
+    students: 0,
+    gtk: 0,
+    rombels: 0,
+  };
+  const nowIso = new Date().toISOString();
+
+  // 1. Restore GTK first so Rombel & TuStaff can resolve GTK IDs accurately
+  if (allowedSet.has('gtk') && Array.isArray(repos.gtk)) {
+    const sanitizedIncoming = repos.gtk
+      .filter((g): g is DapodikGtk => Boolean(g && typeof g === 'object' && typeof g.nama === 'string' && g.nama.trim()))
+      .map((g, idx) =>
+        applyDispendukcapilCheck({
+          ...g,
+          fotoDataUrl: isSafeRasterImageDataUrl(g.fotoDataUrl ?? '') ? (g.fotoDataUrl ?? '') : '',
+          id: typeof g.id === 'string' && g.id.trim() ? g.id.trim() : `gtk-rst-${Date.now()}-${idx}`,
+        })
+      );
+
+    if (mode === 'replace') {
+      writeGtkRepository(sanitizedIncoming);
+      counts.gtk = sanitizedIncoming.length;
+    } else {
+      const existing = readGtkRepository();
+      for (const inc of sanitizedIncoming) {
+        const idx = existing.findIndex(
+          (cur) =>
+            cur.id === inc.id ||
+            (inc.nik && cur.nik === inc.nik) ||
+            (inc.nip && cur.nip === inc.nip) ||
+            (inc.nuptk && cur.nuptk === inc.nuptk)
+        );
+        if (idx >= 0) {
+          existing[idx] = applyDispendukcapilCheck({
+            ...existing[idx],
+            ...inc,
+            fotoDataUrl: inc.fotoDataUrl || existing[idx].fotoDataUrl || '',
+            id: existing[idx].id,
+          });
+        } else {
+          existing.unshift(inc);
+        }
+      }
+      writeGtkRepository(existing);
+      counts.gtk = sanitizedIncoming.length;
+    }
+    restoredKeys.push('gtk');
+  }
+
+  const latestGtkList = readGtkRepository();
+
+  // 2. Students
+  if (allowedSet.has('students') && Array.isArray(repos.students)) {
+    const sanitizedIncoming = repos.students
+      .filter((s): s is DapodikStudent => Boolean(s && typeof s === 'object' && typeof s.nama === 'string' && s.nama.trim()))
+      .map((s, idx) => ({
+        ...s,
+        id: typeof s.id === 'string' && s.id.trim() ? s.id.trim() : `pd-rst-${Date.now()}-${idx}`,
+        vervalPdSyncAt: s.vervalPdSyncAt || nowIso,
+      }));
+
+    if (mode === 'replace') {
+      writeStudentsRepository(sanitizedIncoming);
+      counts.students = sanitizedIncoming.length;
+    } else {
+      const existing = readStudentsRepository();
+      for (const inc of sanitizedIncoming) {
+        const idx = existing.findIndex(
+          (cur) =>
+            cur.id === inc.id ||
+            (inc.nisn && cur.nisn === inc.nisn) ||
+            (inc.nipd && cur.nipd === inc.nipd)
+        );
+        if (idx >= 0) {
+          existing[idx] = { ...existing[idx], ...inc, id: existing[idx].id };
+        } else {
+          existing.unshift(inc);
+        }
+      }
+      writeStudentsRepository(existing);
+      counts.students = sanitizedIncoming.length;
+    }
+    restoredKeys.push('students');
+  }
+
+  // 3. Rombels
+  if (allowedSet.has('rombels') && Array.isArray(repos.rombels)) {
+    const sanitizedIncoming = repos.rombels
+      .filter((r): r is DapodikRombel => Boolean(r && typeof r === 'object' && typeof r.namaRombel === 'string' && r.namaRombel.trim()))
+      .map((r, idx) =>
+        normalizeRombelRecord(
+          {
+            ...r,
+            id: typeof r.id === 'string' && r.id.trim() ? r.id.trim() : `rombel-rst-${Date.now()}-${idx}`,
+            updatedAt: r.updatedAt || nowIso,
+          },
+          latestGtkList
+        )
+      );
+
+    if (mode === 'replace') {
+      writeRombelsRepository(sortRombelsNaturally(sanitizedIncoming));
+      counts.rombels = sanitizedIncoming.length;
+    } else {
+      const existing = readRombelsRepository();
+      for (const inc of sanitizedIncoming) {
+        const idx = existing.findIndex(
+          (cur) =>
+            cur.id === inc.id ||
+            cur.namaRombel.toUpperCase() === inc.namaRombel.toUpperCase()
+        );
+        if (idx >= 0) {
+          existing[idx] = normalizeRombelRecord(
+            { ...existing[idx], ...inc, id: existing[idx].id, updatedAt: nowIso },
+            latestGtkList
+          );
+        } else {
+          existing.push(inc);
+        }
+      }
+      writeRombelsRepository(sortRombelsNaturally(existing));
+      counts.rombels = sanitizedIncoming.length;
+    }
+    restoredKeys.push('rombels');
+  }
+
+  // 4. Requests
+  if (allowedSet.has('requests') && Array.isArray(repos.requests)) {
+    const sanitizedIncoming = repos.requests
+      .filter(
+        (r): r is ServiceRequest =>
+          Boolean(
+            r &&
+              typeof r === 'object' &&
+              typeof r.applicantName === 'string' &&
+              r.applicantName.trim() &&
+              typeof r.purpose === 'string'
+          )
+      )
+      .map((r, idx) => ({
+        ...r,
+        id: typeof r.id === 'string' && r.id.trim() ? r.id.trim() : `TU-RST-${Date.now()}-${idx}`,
+        timeline: Array.isArray(r.timeline) ? r.timeline : [],
+        submittedRequirements: Array.isArray(r.submittedRequirements) ? r.submittedRequirements : [],
+      }));
+
+    if (mode === 'replace') {
+      writeRequestsRepository(sanitizedIncoming);
+      counts.requests = sanitizedIncoming.length;
+    } else {
+      const existing = readRequestsRepository();
+      for (const inc of sanitizedIncoming) {
+        const idx = existing.findIndex((cur) => cur.id === inc.id);
+        if (idx >= 0) {
+          existing[idx] = inc;
+        } else {
+          existing.unshift(inc);
+        }
+      }
+      writeRequestsRepository(existing);
+      counts.requests = sanitizedIncoming.length;
+    }
+    restoredKeys.push('requests');
+  }
+
+  // 5. Agenda
+  if (allowedSet.has('agenda') && Array.isArray(repos.agenda)) {
+    const sanitizedIncoming = repos.agenda
+      .filter(
+        (a): a is AgendaEntry =>
+          Boolean(
+            a &&
+              typeof a === 'object' &&
+              typeof a.subject === 'string' &&
+              a.subject.trim() &&
+              typeof a.letterNumber === 'string'
+          )
+      )
+      .map((a, idx) => ({
+        ...a,
+        id: typeof a.id === 'string' && a.id.trim() ? a.id.trim() : `ag-rst-${Date.now()}-${idx}`,
+      }));
+
+    if (mode === 'replace') {
+      writeAgendaRepository(sanitizedIncoming);
+      counts.agenda = sanitizedIncoming.length;
+    } else {
+      const existing = readAgendaRepository();
+      for (const inc of sanitizedIncoming) {
+        const idx = existing.findIndex(
+          (cur) =>
+            cur.id === inc.id ||
+            (inc.agendaNumber && cur.agendaNumber === inc.agendaNumber)
+        );
+        if (idx >= 0) {
+          existing[idx] = inc;
+        } else {
+          existing.unshift(inc);
+        }
+      }
+      writeAgendaRepository(existing);
+      counts.agenda = sanitizedIncoming.length;
+    }
+    restoredKeys.push('agenda');
+  }
+
+  // 6. Settings
+  if (allowedSet.has('settings') && repos.settings && typeof repos.settings === 'object') {
+    const currentSettings = readSettingsRepository();
+    const rawSet = repos.settings;
+    const nextSettings: PersuratanSettingsData = {
+      kopSurat: rawSet.kopSurat
+        ? sanitizeKopSurat(rawSet.kopSurat, currentSettings.kopSurat).config
+        : currentSettings.kopSurat,
+      reportingPortal: rawSet.reportingPortal
+        ? sanitizeReportingPortal(rawSet.reportingPortal, currentSettings.reportingPortal)
+        : currentSettings.reportingPortal,
+      tuStaff: rawSet.tuStaff
+        ? sanitizeTuStaffConfig(rawSet.tuStaff, latestGtkList, currentSettings.tuStaff)
+        : currentSettings.tuStaff,
+      backup: rawSet.backup
+        ? sanitizeBackupSettings(rawSet.backup, currentSettings.backup).config
+        : currentSettings.backup,
+    };
+    writeSettingsRepository(nextSettings);
+    counts.settings = 1;
+    restoredKeys.push('settings');
+  }
+
+  if (restoredKeys.length === 0) {
+    return {
+      summary: {
+        restoredKeys: [],
+        counts,
+        restoredAt: nowIso,
+      },
+      error: 'Tidak ada data repositori yang valid atau terpilih di dalam berkas backup ini.',
+    };
+  }
+
+  // Record restore metadata in settings
+  const finalSettings = readSettingsRepository();
+  writeSettingsRepository({
+    ...finalSettings,
+    backup: {
+      ...finalSettings.backup,
+      updatedAt: nowIso,
+      updatedBy: actorName,
+    },
+  });
+
+  return {
+    summary: {
+      restoredKeys,
+      counts,
+      restoredAt: nowIso,
+    },
+  };
+}
+
+export type DeduplicateRepoTarget = 'students' | 'gtk' | 'rombels' | 'requests' | 'agenda';
+
+export function deduplicateRepository(
+  target: DeduplicateRepoTarget,
+  deleteIds: string[]
+): {
+  deletedCount: number;
+  remainingCount: number;
+  items: unknown[];
+  tuStaff?: TuStaffConfig;
+} {
+  ensureRepositoriesInitialized();
+  const idSet = new Set(deleteIds.map((id) => String(id).trim()).filter(Boolean));
+
+  if (target === 'students') {
+    const current = readStudentsRepository();
+    const next = current.filter((s) => !idSet.has(s.id));
+    writeStudentsRepository(next);
+    return {
+      deletedCount: current.length - next.length,
+      remainingCount: next.length,
+      items: next,
+    };
+  }
+
+  if (target === 'gtk') {
+    const current = readGtkRepository();
+    const next = current.filter((g) => !idSet.has(g.id));
+    writeGtkRepository(next);
+
+    const settings = readSettingsRepository();
+    const hadOperator = settings.tuStaff.operators.some((op) => idSet.has(op.gtkId));
+    const wasActive = Boolean(settings.tuStaff.activeGtkId && idSet.has(settings.tuStaff.activeGtkId));
+    let updatedTuStaff = settings.tuStaff;
+
+    if (hadOperator || wasActive) {
+      const nextOperators = settings.tuStaff.operators.filter((op) => !idSet.has(op.gtkId));
+      const nextFallbackOp = nextOperators.find((op) => op.isActive) || null;
+      updatedTuStaff = sanitizeTuStaffConfig(
+        {
+          ...settings.tuStaff,
+          operators: nextOperators,
+          activeGtkId: wasActive ? (nextFallbackOp?.gtkId ?? null) : settings.tuStaff.activeGtkId,
+          isEnabled: wasActive && !nextFallbackOp ? false : settings.tuStaff.isEnabled,
+          deactivatedReason:
+            wasActive && !nextFallbackOp
+              ? 'Pegawai TU aktif dihapus saat pembersihan duplikasi GTK.'
+              : settings.tuStaff.deactivatedReason,
+          updatedAt: new Date().toISOString(),
+        },
+        next,
+        DEFAULT_TU_STAFF
+      );
+      writeSettingsRepository({ ...settings, tuStaff: updatedTuStaff });
+    }
+
+    return {
+      deletedCount: current.length - next.length,
+      remainingCount: next.length,
+      items: next,
+      tuStaff: updatedTuStaff,
+    };
+  }
+
+  if (target === 'rombels') {
+    const current = readRombelsRepository();
+    const next = sortRombelsNaturally(current.filter((r) => !idSet.has(r.id)));
+    writeRombelsRepository(next);
+    return {
+      deletedCount: current.length - next.length,
+      remainingCount: next.length,
+      items: next,
+    };
+  }
+
+  if (target === 'requests') {
+    const current = readRequestsRepository();
+    const next = current.filter((r) => !idSet.has(r.id));
+    writeRequestsRepository(next);
+    return {
+      deletedCount: current.length - next.length,
+      remainingCount: next.length,
+      items: next,
+    };
+  }
+
+  const current = readAgendaRepository();
+  const next = current.filter((a) => !idSet.has(a.id));
+  writeAgendaRepository(next);
+  return {
+    deletedCount: current.length - next.length,
+    remainingCount: next.length,
+    items: next,
+  };
 }

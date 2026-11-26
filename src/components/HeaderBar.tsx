@@ -37,6 +37,7 @@ const PEMOHON_TAB_LABELS: Record<WorkspaceTab, string> = {
   rombel: 'Setting Rombel & Wali Kelas (Terproteksi)',
   agenda: 'Buku Agenda Surat (Terproteksi)',
   cetak: 'Cetak Tanda Terima',
+  backup: 'Backup & Restore (Terproteksi)',
 };
 
 const PETUGAS_TAB_LABELS: Record<WorkspaceTab, string> = {
@@ -48,6 +49,7 @@ const PETUGAS_TAB_LABELS: Record<WorkspaceTab, string> = {
   rombel: 'Setting Rombongan Belajar & Wali Kelas',
   agenda: 'Buku Agenda Surat Masuk & Keluar',
   cetak: 'Pratinjau & Cetak Dokumen Resmi',
+  backup: 'Backup, Restore, Import/Export & Email',
 };
 
 export function HeaderBar({

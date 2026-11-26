@@ -30,7 +30,8 @@ export type WorkspaceTab =
   | 'gtk'
   | 'rombel'
   | 'agenda'
-  | 'cetak';
+  | 'cetak'
+  | 'backup';
 
 export type UserMode = 'pemohon' | 'petugas';
 
@@ -332,3 +333,67 @@ export interface DapodikRombel {
   ruangan: string;
   updatedAt?: string;
 }
+
+export type BackupRepositoryKey =
+  | 'requests'
+  | 'agenda'
+  | 'settings'
+  | 'students'
+  | 'gtk'
+  | 'rombels';
+
+export type BackupScopeKey = 'all' | BackupRepositoryKey;
+
+export interface BackupSettingsConfig {
+  targetEmail: string;
+  ccEmail: string;
+  subjectPrefix: string;
+  defaultScope: BackupScopeKey;
+  includeAttachmentFormat: 'json' | 'both';
+  lastBackupAt: string;
+  lastBackupBy: string;
+  lastEmailSentAt: string;
+  lastEmailRecipient: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export interface BackupSettingsBundleData {
+  kopSurat?: KopSuratConfig;
+  reportingPortal?: ReportingPortalConfig;
+  tuStaff?: TuStaffConfig;
+  backup?: BackupSettingsConfig;
+}
+
+export interface BackupBundlePayload {
+  app: 'SIP-TU-SMAN9-SBY';
+  schemaVersion: number;
+  exportedAt: string;
+  exportedBy: string;
+  scope: BackupScopeKey;
+  counts: {
+    requests: number;
+    agenda: number;
+    students: number;
+    gtk: number;
+    rombels: number;
+    settings: number;
+  };
+  repositories: {
+    requests?: ServiceRequest[];
+    agenda?: AgendaEntry[];
+    settings?: BackupSettingsBundleData;
+    students?: DapodikStudent[];
+    gtk?: DapodikGtk[];
+    rombels?: DapodikRombel[];
+  };
+}
+
+export interface RepositoryStatusItem {
+  key: BackupRepositoryKey;
+  label: string;
+  fileName: string;
+  totalRecords: number;
+  updatedAt: string;
+}
+

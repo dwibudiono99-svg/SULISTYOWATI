@@ -1,6 +1,7 @@
-import { Plus, Printer, Search, Trash2, X } from 'lucide-react';
+import { Plus, Printer, Search, Sparkles, Trash2, X } from 'lucide-react';
 import { FormEvent, useMemo, useState } from 'react';
 import { AgendaEntry, AgendaType, LetterClassification, UserMode } from '../types/tu';
+import { findDuplicateAgenda } from '../utils/deduplicationUtils';
 import { formatTanggalIndonesia } from '../utils/formatters';
 
 interface AgendaSuratViewProps {
@@ -9,6 +10,7 @@ interface AgendaSuratViewProps {
   onAddEntry: (entry: AgendaEntry) => void;
   onDeleteEntry: (id: string) => void;
   onOpenReportPrint?: () => void;
+  onOpenDeduplicate?: () => void;
 }
 
 export function AgendaSuratView({
@@ -17,6 +19,7 @@ export function AgendaSuratView({
   onAddEntry,
   onDeleteEntry,
   onOpenReportPrint,
+  onOpenDeduplicate,
 }: AgendaSuratViewProps) {
   const [typeFilter, setTypeFilter] = useState<'ALL' | AgendaType>('ALL');
   const [query, setQuery] = useState('');
@@ -29,6 +32,11 @@ export function AgendaSuratView({
   const [subject, setSubject] = useState('');
   const [classification, setClassification] = useState<LetterClassification>('Biasa');
   const [disposition, setDisposition] = useState('');
+
+  const duplicateGroupsCount = useMemo(
+    () => findDuplicateAgenda(entries, 'all').length,
+    [entries]
+  );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -113,6 +121,22 @@ export function AgendaSuratView({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {userMode === 'petugas' && onOpenDeduplicate && (
+            <button
+              type="button"
+              onClick={onOpenDeduplicate}
+              className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold whitespace-nowrap shrink-0 ${
+                duplicateGroupsCount > 0
+                  ? 'border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
+                  : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <Sparkles className="h-3.5 w-3.5 text-amber-600 shrink-0" aria-hidden="true" />
+              <span>
+                Hapus Duplikat{duplicateGroupsCount > 0 ? ` (${duplicateGroupsCount})` : ''}
+              </span>
+            </button>
+          )}
           {onOpenReportPrint && (
             <button
               type="button"

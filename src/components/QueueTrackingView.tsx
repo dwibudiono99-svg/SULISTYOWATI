@@ -1,7 +1,8 @@
-import { FilePlus2, Pencil, RefreshCw, Search, Trash2, Users } from 'lucide-react';
+import { FilePlus2, Pencil, RefreshCw, Search, Sparkles, Trash2, Users } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { TU_SERVICE_CATALOG } from '../config/schoolConfig';
 import { RequestStatus, ServiceRequest, UserMode } from '../types/tu';
+import { findDuplicateRequests } from '../utils/deduplicationUtils';
 import { formatTanggalIndonesia } from '../utils/formatters';
 import { StatusIndicator } from './StatusIndicator';
 
@@ -15,6 +16,7 @@ interface QueueTrackingViewProps {
   onNavigateCreate: () => void;
   onTrackExact?: (query: string) => Promise<ServiceRequest | null>;
   onRefresh?: () => Promise<void> | void;
+  onOpenDeduplicate?: () => void;
 }
 
 const STATUS_FILTERS: { label: string; value: 'ALL' | RequestStatus }[] = [
@@ -38,6 +40,7 @@ export function QueueTrackingView({
   onNavigateCreate,
   onTrackExact,
   onRefresh,
+  onOpenDeduplicate,
 }: QueueTrackingViewProps) {
   const [searchQuery, setSearchQuery] = useState(initialSearch);
   const [statusFilter, setStatusFilter] = useState<'ALL' | RequestStatus>('ALL');
@@ -87,6 +90,10 @@ export function QueueTrackingView({
   }, [requests, searchQuery, statusFilter, categoryFilter]);
 
   const isPetugas = userMode === 'petugas';
+  const duplicateGroupsCount = useMemo(
+    () => (isPetugas ? findDuplicateRequests(requests, 'all').length : 0),
+    [isPetugas, requests]
+  );
 
   return (
     <div className="space-y-5">
@@ -120,6 +127,23 @@ export function QueueTrackingView({
               </option>
             ))}
           </select>
+
+          {isPetugas && onOpenDeduplicate && (
+            <button
+              type="button"
+              onClick={onOpenDeduplicate}
+              className={`inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold whitespace-nowrap ${
+                duplicateGroupsCount > 0
+                  ? 'border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
+                  : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <Sparkles className="h-3.5 w-3.5 text-amber-600" aria-hidden="true" />
+              <span>
+                Hapus Duplikat{duplicateGroupsCount > 0 ? ` (${duplicateGroupsCount})` : ''}
+              </span>
+            </button>
+          )}
 
           {onRefresh && (
             <button

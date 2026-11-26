@@ -7,6 +7,7 @@ import {
   Plus,
   Search,
   Settings2,
+  Sparkles,
   Upload,
   User,
   Users,
@@ -19,6 +20,7 @@ import {
   ServiceCategoryId,
   UserMode,
 } from '../types/tu';
+import { findDuplicateRombels } from '../utils/deduplicationUtils';
 import { formatPtkDisplayName } from '../utils/gtkDapodikValidation';
 import { normalizeRombelKey, sortRombelsNaturally } from '../utils/rombelDapodikUtils';
 import { ImportMergeMode } from './DapodikImportExportModal';
@@ -38,6 +40,7 @@ interface RombelWaliKelasViewProps {
   onSaveStudent: (student: DapodikStudent, isNew: boolean) => void;
   onDeleteStudent: (id: string) => void;
   onCreateLetterFromStudent: (student: DapodikStudent, serviceId: ServiceCategoryId) => void;
+  onOpenDeduplicate?: () => void;
 }
 
 type TingkatFilter = 'ALL' | '10' | '11' | '12';
@@ -65,6 +68,7 @@ export function RombelWaliKelasView({
   onSaveStudent,
   onDeleteStudent,
   onCreateLetterFromStudent,
+  onOpenDeduplicate,
 }: RombelWaliKelasViewProps) {
   const [viewMode, setViewMode] = useState<RombelViewMode>('roster');
   const [searchQuery, setSearchQuery] = useState('');
@@ -78,6 +82,10 @@ export function RombelWaliKelasView({
   const [importExportTab, setImportExportTab] = useState<'import' | 'export'>('import');
 
   const sortedRombels = useMemo(() => sortRombelsNaturally(rombels), [rombels]);
+  const duplicateGroupsCount = useMemo(
+    () => findDuplicateRombels(rombels).length,
+    [rombels]
+  );
 
   const sortedGtk = useMemo(
     () =>
@@ -321,6 +329,22 @@ export function RombelWaliKelasView({
               <Download className="h-3.5 w-3.5" aria-hidden="true" />
               <span>Ekspor Rombel</span>
             </button>
+            {onOpenDeduplicate && (
+              <button
+                type="button"
+                onClick={onOpenDeduplicate}
+                className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold whitespace-nowrap ${
+                  duplicateGroupsCount > 0
+                    ? 'border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
+                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <Sparkles className="h-3.5 w-3.5 text-amber-600" aria-hidden="true" />
+                <span>
+                  Hapus Duplikat{duplicateGroupsCount > 0 ? ` (${duplicateGroupsCount})` : ''}
+                </span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setCreatingNew(true)}
