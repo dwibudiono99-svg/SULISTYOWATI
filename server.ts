@@ -930,10 +930,12 @@ async function startServer() {
       return;
     }
 
+    const hasManualStaffName =
+      typeof body.activeStaffName === 'string' && body.activeStaffName.trim().length > 0;
     const requestedGtkId =
       typeof body.activeGtkId === 'string' && body.activeGtkId.trim()
         ? body.activeGtkId.trim()
-        : body.activeGtkId === null
+        : body.activeGtkId === null || hasManualStaffName
           ? null
           : current.tuStaff.activeGtkId;
 

@@ -1017,6 +1017,8 @@ export default function App() {
           activeTab={activeTab}
           userMode={userMode}
           reportingOpen={reportingPortal.isOpen}
+          tuStaff={tuStaffConfig}
+          gtkList={gtkList}
           onOpenMobileMenu={() => setMobileMenuOpen(true)}
           onQuickCreate={() => {
             setPrefillStudent(null);
@@ -1025,6 +1027,8 @@ export default function App() {
           }}
           onRequestPetugasAccess={() => void requestPetugasAccess()}
           onOpenReportingControl={() => setReportingModalOpen(true)}
+          onQuickSwitchTuStaff={handleSaveTuStaff}
+          onOpenTuStaffSettings={() => setTuStaffModalOpen(true)}
         />
 
         {toastMessage && (

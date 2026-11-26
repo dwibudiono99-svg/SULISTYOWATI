@@ -1,14 +1,31 @@
-import { Lock, Menu, Plus, ShieldAlert, ShieldCheck } from 'lucide-react';
-import { UserMode, WorkspaceTab } from '../types/tu';
+import {
+  ArrowRightLeft,
+  Check,
+  ChevronDown,
+  Lock,
+  Menu,
+  Plus,
+  ShieldAlert,
+  ShieldCheck,
+  UserCog,
+} from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { DapodikGtk, TuStaffConfig, UserMode, WorkspaceTab } from '../types/tu';
+import { formatPtkDisplayName } from '../utils/gtkDapodikValidation';
+import { buildGtkRoleLabel, isPegawaiTuCandidate } from './TuStaffSettingsModal';
 
 interface HeaderBarProps {
   activeTab: WorkspaceTab;
   userMode: UserMode;
   reportingOpen: boolean;
+  tuStaff?: TuStaffConfig;
+  gtkList?: DapodikGtk[];
   onOpenMobileMenu: () => void;
   onQuickCreate: () => void;
   onRequestPetugasAccess: () => void;
   onOpenReportingControl?: () => void;
+  onQuickSwitchTuStaff?: (nextConfig: Partial<TuStaffConfig>) => Promise<boolean>;
+  onOpenTuStaffSettings?: () => void;
 }
 
 const PEMOHON_TAB_LABELS: Record<WorkspaceTab, string> = {
@@ -37,13 +54,82 @@ export function HeaderBar({
   activeTab,
   userMode,
   reportingOpen,
+  tuStaff,
+  gtkList = [],
   onOpenMobileMenu,
   onQuickCreate,
   onRequestPetugasAccess,
   onOpenReportingControl,
+  onQuickSwitchTuStaff,
+  onOpenTuStaffSettings,
 }: HeaderBarProps) {
   const isPetugas = userMode === 'petugas';
   const labels = isPetugas ? PETUGAS_TAB_LABELS : PEMOHON_TAB_LABELS;
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!switcherOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setSwitcherOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [switcherOpen]);
+
+  const quickCandidates = useMemo(() => {
+    const tuOnes = gtkList.filter(isPegawaiTuCandidate);
+    return (tuOnes.length > 0 ? tuOnes : gtkList).slice(0, 8);
+  }, [gtkList]);
+
+  const handleSelectGtkQuick = async (gtk: DapodikGtk) => {
+    if (!onQuickSwitchTuStaff || switching) return;
+    setSwitching(true);
+    const displayName = formatPtkDisplayName(gtk);
+    const nip = (gtk.nip || gtk.nuptk || '').trim();
+    const role = buildGtkRoleLabel(gtk);
+    const existingOps = tuStaff?.operators || [];
+    const nextOps = existingOps.some((o) => o.gtkId === gtk.id)
+      ? existingOps.map((o) => (o.gtkId === gtk.id ? { ...o, isActive: true } : o))
+      : [
+          {
+            gtkId: gtk.id,
+            nama: displayName,
+            nip,
+            jabatan: role,
+            fotoDataUrl: gtk.fotoDataUrl || '',
+            isActive: true,
+            updatedAt: new Date().toISOString(),
+          },
+          ...existingOps,
+        ];
+    await onQuickSwitchTuStaff({
+      isEnabled: true,
+      activeGtkId: gtk.id,
+      activeStaffName: displayName,
+      activeStaffNip: nip,
+      activeStaffRole: role,
+      activeStaffPhoto: gtk.fotoDataUrl || '',
+      deactivatedReason: '',
+      operators: nextOps,
+    });
+    setSwitching(false);
+    setSwitcherOpen(false);
+  };
+
+  const handleToggleQuick = async (nextEnabled: boolean) => {
+    if (!onQuickSwitchTuStaff || switching) return;
+    setSwitching(true);
+    await onQuickSwitchTuStaff({
+      isEnabled: nextEnabled,
+      deactivatedReason: nextEnabled ? '' : tuStaff?.deactivatedReason || '',
+    });
+    setSwitching(false);
+    setSwitcherOpen(false);
+  };
 
   return (
     <header className="no-print sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-3 sm:px-6 lg:px-8">
@@ -88,12 +174,111 @@ export function HeaderBar({
         </nav>
       </div>
 
-      <div className="flex shrink-0 items-center gap-2.5">
+      <div className="flex shrink-0 items-center gap-2">
+        {isPetugas && tuStaff && onOpenTuStaffSettings && (
+          <div ref={dropdownRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setSwitcherOpen((v) => !v)}
+              aria-expanded={switcherOpen}
+              aria-haspopup="menu"
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-semibold whitespace-nowrap transition-colors ${
+                tuStaff.isEnabled
+                  ? 'border-blue-200 bg-blue-50 text-blue-900 hover:bg-blue-100'
+                  : 'border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100'
+              }`}
+            >
+              <ArrowRightLeft className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span className="max-w-[130px] truncate sm:max-w-[180px]">
+                {tuStaff.isEnabled ? tuStaff.activeStaffName : 'Petugas TU: Nonaktif'}
+              </span>
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden="true" />
+            </button>
+
+            {switcherOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 mt-2 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
+              >
+                <div className="border-b border-slate-100 bg-slate-50 px-3.5 py-2.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Pindah / Atur Petugas TU Cepat
+                  </p>
+                  <p className="mt-0.5 truncate text-xs font-semibold text-slate-900">
+                    {tuStaff.isEnabled ? tuStaff.activeStaffName : 'Petugas TU Dinonaktifkan'}
+                  </p>
+                </div>
+
+                {quickCandidates.length > 0 && (
+                  <div className="max-h-52 divide-y divide-slate-100 overflow-y-auto py-1">
+                    {quickCandidates.map((gtk) => {
+                      const displayName = formatPtkDisplayName(gtk);
+                      const isCurrent = tuStaff.isEnabled && tuStaff.activeGtkId === gtk.id;
+                      return (
+                        <button
+                          key={gtk.id}
+                          type="button"
+                          disabled={switching}
+                          onClick={() => void handleSelectGtkQuick(gtk)}
+                          className={`flex w-full items-center justify-between gap-2 px-3.5 py-2 text-left text-xs hover:bg-slate-50 disabled:opacity-60 ${
+                            isCurrent ? 'bg-blue-50/60 font-semibold text-blue-900' : 'text-slate-700'
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate">{displayName}</p>
+                            <p className="truncate text-[10px] text-slate-500">
+                              {buildGtkRoleLabel(gtk)}
+                            </p>
+                          </div>
+                          {isCurrent && <Check className="h-3.5 w-3.5 shrink-0 text-blue-700" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="border-t border-slate-200 bg-slate-50/70 p-2 space-y-1">
+                  {onQuickSwitchTuStaff && (
+                    <button
+                      type="button"
+                      disabled={switching}
+                      onClick={() => void handleToggleQuick(!tuStaff.isEnabled)}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition ${
+                        tuStaff.isEnabled
+                          ? 'text-rose-700 hover:bg-rose-50'
+                          : 'text-emerald-700 hover:bg-emerald-50'
+                      }`}
+                    >
+                      <ShieldAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      <span>
+                        {tuStaff.isEnabled
+                          ? 'Nonaktifkan Petugas TU'
+                          : 'Aktifkan Kembali Petugas TU'}
+                      </span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSwitcherOpen(false);
+                      onOpenTuStaffSettings();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-blue-700 hover:bg-blue-50"
+                  >
+                    <UserCog className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span>Ganti / Input Petugas TU Lainnya...</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {isPetugas && onOpenReportingControl && (
           <button
             type="button"
             onClick={onOpenReportingControl}
-            className={`hidden sm:inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold whitespace-nowrap transition-colors ${
+            className={`hidden md:inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold whitespace-nowrap transition-colors ${
               reportingOpen
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
                 : 'border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100'
