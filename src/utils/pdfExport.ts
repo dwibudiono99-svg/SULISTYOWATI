@@ -192,45 +192,95 @@ export async function downloadOfficialLetterPdf(params: {
   );
   y += 10;
 
+  const groupParticipants =
+    Array.isArray(request.participants) && request.participants.length > 1
+      ? request.participants
+      : null;
+
   doc.setFontSize(10.5);
-  const intro =
-    'Yang bertanda tangan di bawah ini Kepala SMA Negeri 9 Surabaya, Kota Surabaya, Provinsi Jawa Timur menerangkan dengan sesungguhnya bahwa :';
+  const intro = groupParticipants
+    ? request.serviceId === 'surat-tugas'
+      ? 'Yang bertanda tangan di bawah ini Kepala SMA Negeri 9 Surabaya, Kota Surabaya, Provinsi Jawa Timur menugaskan kepada nama-nama tersebut di bawah ini :'
+      : request.serviceId === 'izin-kegiatan'
+        ? 'Yang bertanda tangan di bawah ini Kepala SMA Negeri 9 Surabaya, Kota Surabaya, Provinsi Jawa Timur memberikan izin / dispensasi kegiatan kepada peserta didik dan/atau pembina berikut :'
+        : request.serviceId === 'rekomendasi'
+          ? 'Yang bertanda tangan di bawah ini Kepala SMA Negeri 9 Surabaya, Kota Surabaya, Provinsi Jawa Timur memberikan rekomendasi untuk mengikuti kegiatan kepada nama-nama berikut :'
+          : 'Yang bertanda tangan di bawah ini Kepala SMA Negeri 9 Surabaya, Kota Surabaya, Provinsi Jawa Timur menerangkan dengan sesungguhnya bahwa nama-nama berikut :'
+    : 'Yang bertanda tangan di bawah ini Kepala SMA Negeri 9 Surabaya, Kota Surabaya, Provinsi Jawa Timur menerangkan dengan sesungguhnya bahwa :';
   const introLines = doc.splitTextToSize(intro, maxWidth) as string[];
   doc.text(introLines, marginX, y);
   y += introLines.length * 5.2 + 4;
 
-  const rows: [string, string][] = [
-    ['Nama Lengkap', request.applicantName || '-'],
-    [
-      request.applicantRole === 'Guru / Tendik' ? 'NIP / NUPTK' : 'NISN / NIS',
-      request.identityNumber || '-',
-    ],
-    ['Status / Kelas / Unit', `${request.applicantRole} — ${request.classOrCohort || '-'}`],
-    ['Instansi / Sekolah', 'SMA Negeri 9 Surabaya'],
-  ];
+  if (groupParticipants) {
+    autoTable(doc, {
+      startY: y,
+      margin: { left: marginX, right: marginX },
+      theme: 'grid',
+      styles: { fontSize: 9, cellPadding: 2.5, textColor: [15, 23, 42], lineColor: [30, 41, 59], lineWidth: 0.2 },
+      headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 10, halign: 'center' },
+        2: { cellWidth: 34 },
+        3: { cellWidth: 32 },
+        4: { cellWidth: 30 },
+      },
+      head: [['No', 'Nama Lengkap', 'NISN / NIS / NIP', 'Kelas / Jabatan', 'Keterangan']],
+      body: groupParticipants.map((p, idx) => [
+        String(idx + 1),
+        p.nama || '-',
+        p.identityNumber || '-',
+        p.classOrCohort || '-',
+        p.roleLabel || 'Peserta',
+      ]),
+    });
+    y = ((doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? y + 25) + 6;
+  } else {
+    const rows: [string, string][] = [
+      ['Nama Lengkap', request.applicantName || '-'],
+      [
+        request.applicantRole === 'Guru / Tendik' ? 'NIP / NUPTK' : 'NISN / NIS',
+        request.identityNumber || '-',
+      ],
+      ['Status / Kelas / Unit', `${request.applicantRole} — ${request.classOrCohort || '-'}`],
+      ['Instansi / Sekolah', 'SMA Negeri 9 Surabaya'],
+    ];
 
-  for (const [label, value] of rows) {
-    doc.setFont('helvetica', 'normal');
-    doc.text(label, marginX + 4, y);
-    doc.text(':', marginX + 52, y);
-    doc.setFont('helvetica', label === 'Nama Lengkap' ? 'bold' : 'normal');
-    const valLines = doc.splitTextToSize(value, maxWidth - 58) as string[];
-    doc.text(valLines, marginX + 56, y);
-    y += Math.max(1, valLines.length) * 5.2 + 1;
+    for (const [label, value] of rows) {
+      doc.setFont('helvetica', 'normal');
+      doc.text(label, marginX + 4, y);
+      doc.text(':', marginX + 52, y);
+      doc.setFont('helvetica', label === 'Nama Lengkap' ? 'bold' : 'normal');
+      const valLines = doc.splitTextToSize(value, maxWidth - 58) as string[];
+      doc.text(valLines, marginX + 56, y);
+      y += Math.max(1, valLines.length) * 5.2 + 1;
+    }
+    y += 4;
   }
 
-  y += 4;
   doc.setFont('helvetica', 'normal');
-  const body1 = `Berdasarkan data pokok administrasi Tata Usaha SMA Negeri 9 Surabaya, yang bersangkutan tercatat secara resmi dan permohonan layanan ${request.serviceTitle} ini diterbitkan untuk keperluan: ${request.purpose}.`;
+  doc.setFontSize(10.5);
+  const body1 = groupParticipants
+    ? `Berdasarkan data administrasi Tata Usaha SMA Negeri 9 Surabaya, nama-nama tersebut di atas (${groupParticipants.length} orang) secara resmi tercatat dan diterbitkan surat ${request.serviceTitle} untuk keperluan/kegiatan: ${request.purpose}.`
+    : `Berdasarkan data pokok administrasi Tata Usaha SMA Negeri 9 Surabaya, yang bersangkutan tercatat secara resmi dan permohonan layanan ${request.serviceTitle} ini diterbitkan untuk keperluan: ${request.purpose}.`;
   const body1Lines = doc.splitTextToSize(body1, maxWidth) as string[];
+  if (y + body1Lines.length * 5.2 > 265) {
+    doc.addPage();
+    y = 20;
+  }
   doc.text(body1Lines, marginX, y);
   y += body1Lines.length * 5.2 + 4;
 
-  const body2 =
-    'Demikian surat keterangan ini dibuat dengan sebenarnya agar dapat dipergunakan sebagaimana mestinya.';
+  const body2 = groupParticipants
+    ? 'Demikian surat ini dibuat dengan sebenarnya agar dapat dilaksanakan penuh tanggung jawab dan dipergunakan sebagaimana mestinya.'
+    : 'Demikian surat keterangan ini dibuat dengan sebenarnya agar dapat dipergunakan sebagaimana mestinya.';
   const body2Lines = doc.splitTextToSize(body2, maxWidth) as string[];
   doc.text(body2Lines, marginX, y);
-  y += body2Lines.length * 5.2 + 14;
+  y += body2Lines.length * 5.2 + 12;
+
+  if (y > 245) {
+    doc.addPage();
+    y = 24;
+  }
 
   const signX = pageWidth - marginX - 65;
   doc.text(
@@ -282,7 +332,12 @@ export async function downloadReceiptPdf(params: {
       0: { cellWidth: 46, fontStyle: 'bold', fillColor: [248, 250, 252] },
     },
     body: [
-      ['Nama Pemohon', request.applicantName || '-'],
+      [
+        'Nama Pemohon',
+        Array.isArray(request.participants) && request.participants.length > 1
+          ? `${request.applicantName || '-'} dkk (${request.participants.length} peserta)`
+          : request.applicantName || '-',
+      ],
       ['NISN / NIS / NIP', request.identityNumber || '-'],
       ['Jenis Layanan', request.serviceTitle || '-'],
       ['Status Saat Ini', request.status || '-'],
@@ -294,7 +349,33 @@ export async function downloadReceiptPdf(params: {
 
   const tableEndY =
     (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? y + 60;
-  y = tableEndY + 8;
+  y = tableEndY + 7;
+
+  if (Array.isArray(request.participants) && request.participants.length > 1) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.text(`Daftar Peserta Tercatat (${request.participants.length} Orang):`, marginX, y);
+    y += 3;
+
+    autoTable(doc, {
+      startY: y,
+      margin: { left: marginX, right: marginX },
+      theme: 'grid',
+      styles: { fontSize: 8.5, cellPadding: 2, textColor: [15, 23, 42] },
+      headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold' },
+      columnStyles: { 0: { cellWidth: 10, halign: 'center' } },
+      head: [['No', 'Nama Lengkap', 'NISN / NIP', 'Kelas / Jabatan', 'Peran']],
+      body: request.participants.map((p, idx) => [
+        String(idx + 1),
+        p.nama || '-',
+        p.identityNumber || '-',
+        p.classOrCohort || '-',
+        p.roleLabel || 'Peserta',
+      ]),
+    });
+
+    y = ((doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? y + 25) + 7;
+  }
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9.5);
@@ -406,7 +487,9 @@ export async function downloadRekapLaporanPdf(params: {
       requests.length > 0
         ? requests.map((r) => [
             r.id,
-            `${r.applicantName} (${r.classOrCohort || r.applicantRole})`,
+            Array.isArray(r.participants) && r.participants.length > 1
+              ? `${r.applicantName} dkk (${r.participants.length} peserta)`
+              : `${r.applicantName} (${r.classOrCohort || r.applicantRole})`,
             r.serviceTitle,
             r.letterNumber || '-',
             r.status,

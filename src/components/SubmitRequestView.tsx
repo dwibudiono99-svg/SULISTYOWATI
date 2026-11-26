@@ -1,24 +1,30 @@
 import {
   AlertCircle,
+  ArrowDown,
+  ArrowUp,
   CheckCircle2,
   CheckSquare,
   ClipboardList,
   Database,
   Loader2,
+  Plus,
   Search,
   Send,
   ShieldAlert,
   Square,
+  Trash2,
   User,
+  UserPlus,
   Users,
 } from 'lucide-react';
-import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SCHOOL_INFO, TU_SERVICE_CATALOG } from '../config/schoolConfig';
 import {
   ApplicantRole,
   DapodikGtk,
   DapodikStudent,
   ReportingPortalConfig,
+  RequestParticipant,
   ServiceCategoryId,
   ServiceRequest,
   UserMode,
@@ -71,6 +77,11 @@ interface SubmitRequestViewProps {
 }
 
 const ROLES: ApplicantRole[] = ['Siswa', 'Alumni', 'Guru / Tendik', 'Orang Tua / Wali'];
+const MULTI_PARTICIPANT_SERVICES = new Set<ServiceCategoryId>([
+  'surat-tugas',
+  'rekomendasi',
+  'izin-kegiatan',
+]);
 
 function studentToSummary(s: DapodikStudent): LookupStudentSummary {
   return {
@@ -107,6 +118,10 @@ function gtkToSummary(g: DapodikGtk): LookupGtkSummary {
   };
 }
 
+function createParticipantId(): string {
+  return `ps-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
 export function SubmitRequestView({
   initialServiceId,
   existingCount,
@@ -131,6 +146,25 @@ export function SubmitRequestView({
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Mode Perorangan vs Berkelompok / Multiple Peserta
+  const [isGroupMode, setIsGroupMode] = useState(false);
+  const [participants, setParticipants] = useState<RequestParticipant[]>([]);
+
+  // Pencari Tambah Peserta ke Tabel (untuk Berkelompok)
+  const [memberLookupType, setMemberLookupType] = useState<'siswa' | 'gtk'>('siswa');
+  const [memberQuery, setMemberQuery] = useState('');
+  const [memberSearching, setMemberSearching] = useState(false);
+  const [memberHint, setMemberHint] = useState('');
+  const [memberStudentResults, setMemberStudentResults] = useState<LookupStudentSummary[]>([]);
+  const [memberGtkResults, setMemberGtkResults] = useState<LookupGtkSummary[]>([]);
+
+  // Panel Pilih Banyak (untuk Petugas TU saat database Dapodik Siswa/GTK termuat)
+  const [bulkPickerOpen, setBulkPickerOpen] = useState(false);
+  const [bulkTab, setBulkTab] = useState<'siswa' | 'gtk'>('siswa');
+  const [bulkSearch, setBulkSearch] = useState('');
+  const [bulkRombelFilter, setBulkRombelFilter] = useState('ALL');
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<string[]>([]);
+
   const [selectedDapodikId, setSelectedDapodikId] = useState('');
   const [selectedGtkId, setSelectedGtkId] = useState('');
 
@@ -143,6 +177,17 @@ export function SubmitRequestView({
   useEffect(() => {
     setServiceId(initialServiceId);
   }, [initialServiceId]);
+
+  // Sinkronkan tipe default pencarian peserta saat ganti layanan/peran
+  useEffect(() => {
+    if (serviceId === 'surat-tugas' || applicantRole === 'Guru / Tendik') {
+      setMemberLookupType('gtk');
+      if (gtkList.length > 0) setBulkTab('gtk');
+    } else {
+      setMemberLookupType('siswa');
+      if (students.length > 0) setBulkTab('siswa');
+    }
+  }, [serviceId, applicantRole, gtkList.length, students.length]);
 
   const applyStudentSummary = useCallback((student: LookupStudentSummary, overwriteIdentity = true) => {
     setSelectedDapodikId(student.id);
@@ -200,10 +245,58 @@ export function SubmitRequestView({
 
   const selectedService =
     TU_SERVICE_CATALOG.find((s) => s.id === serviceId) ?? TU_SERVICE_CATALOG[0];
+  const supportsMultiService = MULTI_PARTICIPANT_SERVICES.has(serviceId);
 
   useEffect(() => {
     setCheckedReqs([]);
   }, [serviceId]);
+
+  const addParticipantRow = useCallback((entry: Omit<RequestParticipant, 'id'>) => {
+    setParticipants((prev) => {
+      const idNorm = entry.identityNumber.trim().toLowerCase();
+      const nameNorm = entry.nama.trim().toLowerCase();
+      const alreadyExists = prev.some(
+        (p) =>
+          (idNorm && idNorm !== '-' && p.identityNumber.trim().toLowerCase() === idNorm) ||
+          (nameNorm && p.nama.trim().toLowerCase() === nameNorm && p.classOrCohort.trim().toLowerCase() === entry.classOrCohort.trim().toLowerCase())
+      );
+      if (alreadyExists) return prev;
+      return [
+        ...prev,
+        {
+          id: createParticipantId(),
+          nama: entry.nama.trim(),
+          identityNumber: entry.identityNumber.trim() || '-',
+          classOrCohort: entry.classOrCohort.trim() || '-',
+          roleLabel: entry.roleLabel?.trim() || (prev.length === 0 ? 'Ketua / Koordinator' : 'Peserta'),
+        },
+      ];
+    });
+  }, []);
+
+  const handleToggleGroupMode = (enabled: boolean) => {
+    setIsGroupMode(enabled);
+    setFormError('');
+    if (enabled && participants.length === 0 && applicantName.trim()) {
+      addParticipantRow({
+        nama: applicantName.trim(),
+        identityNumber: identityNumber.trim() || '-',
+        classOrCohort: classOrCohort.trim() || '-',
+        roleLabel: applicantRole === 'Guru / Tendik' ? 'Koordinator / Pembina' : 'Ketua Tim / Peserta',
+      });
+    }
+  };
+
+  // Sinkronkan baris pertama ke kolom utama bila kolom utama masih kosong di mode berkelompok
+  useEffect(() => {
+    if (!isGroupMode || participants.length === 0) return;
+    const first = participants[0];
+    if (!applicantName.trim() && first.nama.trim()) {
+      setApplicantName(first.nama);
+      setIdentityNumber(first.identityNumber !== '-' ? first.identityNumber : '');
+      setClassOrCohort(first.classOrCohort);
+    }
+  }, [isGroupMode, participants, applicantName]);
 
   const runStudentLookup = useCallback(
     async (queryRaw: string, fromButton = false) => {
@@ -222,7 +315,6 @@ export function SubmitRequestView({
         return;
       }
 
-      // Check local students list first (when loaded in Petugas mode)
       if (students.length > 0) {
         const localMatch = students.find((s) => {
           const nisn = String(s.nisn ?? '').trim();
@@ -290,7 +382,6 @@ export function SubmitRequestView({
         return;
       }
 
-      // Check local gtkList first if available
       if (gtkList.length > 0) {
         const exact = gtkList.find((g) => {
           const nipDigits = String(g.nip ?? '').replace(/\D/g, '');
@@ -356,6 +447,109 @@ export function SubmitRequestView({
     [gtkList, matchedGtk, applyGtkSummary]
   );
 
+  // Pencarian cepat peserta tambahan di mode berkelompok
+  const runMemberSearch = useCallback(async () => {
+    const q = memberQuery.trim();
+    const digitsOnly = q.replace(/\D/g, '');
+    setMemberHint('');
+    setMemberStudentResults([]);
+    setMemberGtkResults([]);
+
+    if (q.length < 3) {
+      setMemberHint('Ketik minimal 3 karakter (NIS/NISN untuk Siswa, atau NIP/Nama untuk GTK).');
+      return;
+    }
+
+    if (memberLookupType === 'siswa') {
+      if (students.length > 0) {
+        const matches = students
+          .filter((s) => {
+            if (digitsOnly.length >= 4) {
+              return (
+                s.nisn.replace(/\D/g, '').includes(digitsOnly) ||
+                s.nipd.replace(/\D/g, '').includes(digitsOnly)
+              );
+            }
+            return (
+              s.nama.toLowerCase().includes(q.toLowerCase()) ||
+              s.rombelSaatIni.toLowerCase().includes(q.toLowerCase())
+            );
+          })
+          .slice(0, 8)
+          .map(studentToSummary);
+        setMemberStudentResults(matches);
+        if (matches.length === 0) {
+          setMemberHint('Siswa tidak ditemukan di database Dapodik. Gunakan "Tambah Baris Manual" bila perlu.');
+        }
+        return;
+      }
+
+      setMemberSearching(true);
+      try {
+        const res = await fetch(`/api/dapodik/lookup-student?q=${encodeURIComponent(q)}`);
+        if (res.ok) {
+          const data = (await res.json()) as {
+            found: boolean;
+            student: LookupStudentSummary | null;
+          };
+          if (data.found && data.student) {
+            setMemberStudentResults([data.student]);
+          } else {
+            setMemberHint('NIS/NISN siswa tidak ditemukan di Dapodik. Silakan tambah baris manual di tabel.');
+          }
+        }
+      } catch {
+        setMemberHint('Gagal mencari data siswa di server.');
+      } finally {
+        setMemberSearching(false);
+      }
+    } else {
+      if (gtkList.length > 0) {
+        const matches = gtkList
+          .filter((g) => {
+            if (digitsOnly.length >= 6) {
+              return (
+                g.nip.replace(/\D/g, '').includes(digitsOnly) ||
+                g.nuptk.replace(/\D/g, '').includes(digitsOnly)
+              );
+            }
+            return (
+              g.nama.toLowerCase().includes(q.toLowerCase()) ||
+              formatPtkDisplayName(g).toLowerCase().includes(q.toLowerCase())
+            );
+          })
+          .slice(0, 8)
+          .map(gtkToSummary);
+        setMemberGtkResults(matches);
+        if (matches.length === 0) {
+          setMemberHint('GTK tidak ditemukan di database PTK. Gunakan "Tambah Baris Manual" bila perlu.');
+        }
+        return;
+      }
+
+      setMemberSearching(true);
+      try {
+        const res = await fetch(`/api/dapodik/lookup-gtk?q=${encodeURIComponent(q)}`);
+        if (res.ok) {
+          const data = (await res.json()) as {
+            found: boolean;
+            gtk: LookupGtkSummary | null;
+            candidates: LookupGtkSummary[];
+          };
+          const list = data.candidates.length > 0 ? data.candidates : data.gtk ? [data.gtk] : [];
+          setMemberGtkResults(list);
+          if (list.length === 0) {
+            setMemberHint('NIP/Nama GTK belum ditemukan di Dapodik. Silakan tambah baris manual.');
+          }
+        }
+      } catch {
+        setMemberHint('Gagal mencari data GTK di server.');
+      } finally {
+        setMemberSearching(false);
+      }
+    }
+  }, [memberQuery, memberLookupType, students, gtkList]);
+
   // Debounced auto-lookup saat Siswa mengetik NIS/NISN
   useEffect(() => {
     if (applicantRole !== 'Siswa' && applicantRole !== 'Alumni') return;
@@ -415,11 +609,132 @@ export function SubmitRequestView({
     );
   };
 
+  const updateParticipantCell = (
+    id: string,
+    field: keyof Omit<RequestParticipant, 'id'>,
+    value: string
+  ) => {
+    setParticipants((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, [field]: value } : p))
+    );
+  };
+
+  const moveParticipant = (index: number, delta: -1 | 1) => {
+    setParticipants((prev) => {
+      const target = index + delta;
+      if (target < 0 || target >= prev.length) return prev;
+      const copy = [...prev];
+      const [item] = copy.splice(index, 1);
+      copy.splice(target, 0, item);
+      return copy;
+    });
+  };
+
+  const removeParticipant = (id: string) => {
+    setParticipants((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  const rombelOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of students) {
+      if (s.rombelSaatIni) set.add(s.rombelSaatIni);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [students]);
+
+  const filteredBulkStudents = useMemo(() => {
+    const q = bulkSearch.trim().toLowerCase();
+    return students
+      .filter((s) => {
+        if (bulkRombelFilter !== 'ALL' && s.rombelSaatIni !== bulkRombelFilter) return false;
+        if (!q) return true;
+        return (
+          s.nama.toLowerCase().includes(q) ||
+          s.nisn.toLowerCase().includes(q) ||
+          s.nipd.toLowerCase().includes(q) ||
+          s.rombelSaatIni.toLowerCase().includes(q)
+        );
+      })
+      .slice(0, 80);
+  }, [students, bulkSearch, bulkRombelFilter]);
+
+  const filteredBulkGtk = useMemo(() => {
+    const q = bulkSearch.trim().toLowerCase();
+    return gtkList
+      .filter((g) => {
+        if (!q) return true;
+        return (
+          g.nama.toLowerCase().includes(q) ||
+          formatPtkDisplayName(g).toLowerCase().includes(q) ||
+          g.nip.toLowerCase().includes(q) ||
+          g.nuptk.toLowerCase().includes(q) ||
+          (g.jabatanPtk || g.jenisPtk).toLowerCase().includes(q)
+        );
+      })
+      .slice(0, 80);
+  }, [gtkList, bulkSearch]);
+
+  const handleCommitBulkSelection = () => {
+    if (bulkSelectedIds.length === 0) return;
+    if (bulkTab === 'siswa') {
+      for (const id of bulkSelectedIds) {
+        const st = students.find((s) => s.id === id);
+        if (st) {
+          addParticipantRow({
+            nama: st.nama,
+            identityNumber: st.nisn || st.nipd || '-',
+            classOrCohort: st.rombelSaatIni || '-',
+            roleLabel: participants.length === 0 ? 'Ketua / Peserta' : 'Peserta',
+          });
+        }
+      }
+    } else {
+      for (const id of bulkSelectedIds) {
+        const g = gtkList.find((item) => item.id === id);
+        if (g) {
+          addParticipantRow({
+            nama: formatPtkDisplayName(g) || g.nama,
+            identityNumber: g.nip || g.nuptk || '-',
+            classOrCohort: g.jabatanPtk || g.tugasTambahan || g.jenisPtk,
+            roleLabel: 'Pelaksana / Guru',
+          });
+        }
+      }
+    }
+    setBulkSelectedIds([]);
+    setBulkPickerOpen(false);
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
 
-    if (!applicantName.trim() || !identityNumber.trim() || !phone.trim() || !purpose.trim()) {
+    const cleanedParticipants = isGroupMode
+      ? participants
+          .map((p) => ({
+            id: p.id,
+            nama: p.nama.trim(),
+            identityNumber: p.identityNumber.trim() || '-',
+            classOrCohort: p.classOrCohort.trim() || '-',
+            roleLabel: p.roleLabel?.trim() || 'Peserta',
+          }))
+          .filter((p) => p.nama.length > 0)
+      : [];
+
+    if (isGroupMode && cleanedParticipants.length < 2) {
+      setFormError(
+        'Mode Berkelompok memerlukan minimal 2 peserta di dalam Tabel Daftar Peserta. Tambahkan peserta lain atau ubah ke mode Perorangan.'
+      );
+      return;
+    }
+
+    const effectiveName = applicantName.trim() || cleanedParticipants[0]?.nama || '';
+    const effectiveIdentity =
+      identityNumber.trim() || cleanedParticipants[0]?.identityNumber || '';
+    const effectiveClass =
+      classOrCohort.trim() || cleanedParticipants[0]?.classOrCohort || '-';
+
+    if (!effectiveName || !effectiveIdentity || !phone.trim() || !purpose.trim()) {
       setFormError(
         'Mohon lengkapi Nama Lengkap, NIS/NISN/NIP, Nomor WhatsApp, dan Keperluan Permohonan.'
       );
@@ -434,13 +749,14 @@ export function SubmitRequestView({
       id: ticketId,
       serviceId: selectedService.id,
       serviceTitle: selectedService.title,
-      applicantName: applicantName.trim(),
+      applicantName: effectiveName,
       applicantRole,
-      identityNumber: identityNumber.trim(),
-      classOrCohort: classOrCohort.trim() || '-',
+      identityNumber: effectiveIdentity,
+      classOrCohort: effectiveClass,
       phone: phone.trim(),
       purpose: purpose.trim(),
       notes: notes.trim(),
+      participants: cleanedParticipants.length > 1 ? cleanedParticipants : undefined,
       submittedRequirements: checkedReqs,
       status: 'Diajukan',
       assignedStaff: SCHOOL_INFO.staffName,
@@ -452,8 +768,11 @@ export function SubmitRequestView({
           id: `tl-${Date.now()}`,
           timestamp: now.toISOString(),
           status: 'Diajukan',
-          actor: applicantName.trim(),
-          note: `Permohonan ${selectedService.title} diajukan secara daring melalui SIP TU SMAN 9 Surabaya.`,
+          actor: effectiveName,
+          note:
+            cleanedParticipants.length > 1
+              ? `Permohonan berkelompok ${selectedService.title} (${cleanedParticipants.length} peserta) diajukan melalui SIP TU SMAN 9 Surabaya.`
+              : `Permohonan ${selectedService.title} diajukan secara daring melalui SIP TU SMAN 9 Surabaya.`,
         },
       ],
     };
@@ -470,6 +789,11 @@ export function SubmitRequestView({
         setPurpose('');
         setNotes('');
         setCheckedReqs([]);
+        setParticipants([]);
+        setIsGroupMode(false);
+        setMemberQuery('');
+        setMemberStudentResults([]);
+        setMemberGtkResults([]);
         setSelectedDapodikId('');
         setSelectedGtkId('');
         setMatchedStudent(null);
@@ -532,7 +856,7 @@ export function SubmitRequestView({
             Formulir Permohonan Pelayanan Tata Usaha
           </h2>
           <p className="mt-1 text-sm text-slate-600">
-            Ketik <strong>NIS / NISN</strong> (untuk Siswa) atau <strong>NIP / Nama</strong> (untuk GTK) agar nama dan identitas muncul otomatis sesuai Dapodik SMAN 9 Surabaya.
+            Ketik <strong>NIS / NISN</strong> (untuk Siswa) atau <strong>NIP / Nama</strong> (untuk GTK) agar identitas muncul otomatis sesuai Dapodik. Untuk Surat Tugas atau Lomba Berkelompok, pilih mode <strong>Berkelompok / Multiple Peserta</strong>.
           </p>
         </div>
 
@@ -621,28 +945,69 @@ export function SubmitRequestView({
           </select>
         </div>
 
-        {/* Status Pemohon */}
-        <div>
-          <span className="block text-sm font-medium text-slate-800">Status Pemohon</span>
-          <div className="mt-1.5 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {ROLES.map((role) => (
-              <button
-                key={role}
-                type="button"
-                onClick={() => handleRoleChange(role)}
-                className={`h-10 rounded-lg border px-3 text-xs font-medium transition-colors whitespace-nowrap ${
-                  applicantRole === role
-                    ? 'border-blue-700 bg-blue-50 text-blue-800'
-                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                {role}
-              </button>
-            ))}
+        {/* Status Pemohon & Mode Jumlah Peserta */}
+        <div className="space-y-4">
+          <div>
+            <span className="block text-sm font-medium text-slate-800">Status Pemohon Utama / Penanggung Jawab</span>
+            <div className="mt-1.5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {ROLES.map((role) => (
+                <button
+                  key={role}
+                  type="button"
+                  onClick={() => handleRoleChange(role)}
+                  className={`h-10 rounded-lg border px-3 text-xs font-medium transition-colors whitespace-nowrap ${
+                    applicantRole === role
+                      ? 'border-blue-700 bg-blue-50 text-blue-800'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  {role}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <span className="block text-xs font-semibold text-slate-800">
+                  Jumlah Peserta dalam Surat {supportsMultiService ? '(Disarankan untuk Surat Tugas / Lomba)' : ''}
+                </span>
+                <p className="text-[11px] text-slate-500">
+                  Pilih Berkelompok jika Surat Tugas, Rekomendasi Lomba, atau Dispensasi ditujukan lebih dari 1 orang.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 rounded-lg border border-slate-200 bg-white p-1">
+                <button
+                  type="button"
+                  onClick={() => handleToggleGroupMode(false)}
+                  className={`inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap ${
+                    !isGroupMode
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <User className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Perorangan</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleToggleGroupMode(true)}
+                  className={`inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap ${
+                    isGroupMode
+                      ? 'bg-blue-700 text-white'
+                      : 'text-slate-700 hover:bg-blue-50 hover:text-blue-800'
+                  }`}
+                >
+                  <Users className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Berkelompok / Multiple</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Data Identitas dengan Pencarian Otomatis Dapodik */}
+        {/* Data Identitas Pemohon Utama dengan Pencarian Otomatis Dapodik */}
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
@@ -654,7 +1019,7 @@ export function SubmitRequestView({
                   <input
                     id="identity-number"
                     type="text"
-                    required
+                    required={!isGroupMode || participants.length === 0}
                     value={identityNumber}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -699,12 +1064,14 @@ export function SubmitRequestView({
               <label htmlFor="applicant-name" className="block text-sm font-medium text-slate-800">
                 {applicantRole === 'Guru / Tendik'
                   ? 'Nama Lengkap GTK (Ketik Nama untuk Cek PTK)'
-                  : 'Nama Lengkap Pemohon / Siswa'}
+                  : isGroupMode
+                    ? 'Nama Pemohon Utama / Ketua Tim'
+                    : 'Nama Lengkap Pemohon / Siswa'}
               </label>
               <input
                 id="applicant-name"
                 type="text"
-                required
+                required={!isGroupMode || participants.length === 0}
                 value={applicantName}
                 onChange={(e) => {
                   const val = e.target.value;
@@ -748,7 +1115,7 @@ export function SubmitRequestView({
 
             <div>
               <label htmlFor="phone-number" className="block text-sm font-medium text-slate-800">
-                Nomor WhatsApp Aktif
+                Nomor WhatsApp Aktif (Kontak Penanggung Jawab)
               </label>
               <input
                 id="phone-number"
@@ -770,9 +1137,28 @@ export function SubmitRequestView({
                   <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-700" aria-hidden="true" />
                   <span>Identitas Siswa Terverifikasi di Database Dapodik SMAN 9 Surabaya</span>
                 </div>
-                <span className="rounded border border-emerald-300 bg-white px-2 py-0.5 font-mono text-[11px] font-semibold text-emerald-800">
-                  STATUS: {matchedStudent.statusSiswa.toUpperCase()}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="rounded border border-emerald-300 bg-white px-2 py-0.5 font-mono text-[11px] font-semibold text-emerald-800">
+                    STATUS: {matchedStudent.statusSiswa.toUpperCase()}
+                  </span>
+                  {isGroupMode && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        addParticipantRow({
+                          nama: matchedStudent.nama,
+                          identityNumber: matchedStudent.nisn || matchedStudent.nipd,
+                          classOrCohort: matchedStudent.rombelSaatIni || '-',
+                          roleLabel: participants.length === 0 ? 'Ketua Tim' : 'Peserta',
+                        })
+                      }
+                      className="inline-flex items-center gap-1 rounded-md bg-emerald-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-800"
+                    >
+                      <Plus className="h-3 w-3" aria-hidden="true" />
+                      <span>Masukkan ke Tabel</span>
+                    </button>
+                  )}
+                </div>
               </div>
               <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-emerald-200/70 pt-3 text-xs sm:grid-cols-4">
                 <div>
@@ -825,9 +1211,28 @@ export function SubmitRequestView({
                       <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-700" aria-hidden="true" />
                       <span>Data GTK Padan dengan Database PTK Dapodik</span>
                     </div>
-                    <span className="rounded border border-emerald-300 bg-white px-2 py-0.5 text-[10px] font-semibold normal-case text-emerald-800">
-                      {matchedGtk.dukcapilStatus}
-                    </span>
+                    <div className="flex items-center gap-2 normal-case">
+                      <span className="rounded border border-emerald-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
+                        {matchedGtk.dukcapilStatus}
+                      </span>
+                      {isGroupMode && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            addParticipantRow({
+                              nama: matchedGtk.displayName || matchedGtk.nama,
+                              identityNumber: matchedGtk.nip || matchedGtk.nuptk || '-',
+                              classOrCohort: matchedGtk.jabatanPtk || matchedGtk.tugasTambahan || matchedGtk.jenisPtk,
+                              roleLabel: 'Pelaksana / Guru',
+                            })
+                          }
+                          className="inline-flex items-center gap-1 rounded-md bg-emerald-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-800"
+                        >
+                          <Plus className="h-3 w-3" aria-hidden="true" />
+                          <span>Masukkan ke Tabel</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <p className="mt-1 text-sm font-bold text-slate-900">
                     {matchedGtk.displayName || matchedGtk.nama}
@@ -898,10 +1303,441 @@ export function SubmitRequestView({
           )}
         </div>
 
+        {/* Builder & Tabel Daftar Peserta Berkelompok */}
+        {isGroupMode && (
+          <section className="space-y-4 rounded-xl border border-blue-200 bg-blue-50/40 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                  <Users className="h-4 w-4 text-blue-700" aria-hidden="true" />
+                  <span>Daftar Peserta Berkelompok ({participants.length} Orang)</span>
+                </h3>
+                <p className="mt-0.5 text-xs text-slate-600">
+                  Tambahkan lebih dari 1 siswa atau guru/pembina. Daftar ini akan dicetak rapi dalam bentuk tabel pada Surat Resmi & Tanda Terima.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {applicantName.trim() && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      addParticipantRow({
+                        nama: applicantName.trim(),
+                        identityNumber: identityNumber.trim() || '-',
+                        classOrCohort: classOrCohort.trim() || '-',
+                        roleLabel: applicantRole === 'Guru / Tendik' ? 'Koordinator / Pembina' : 'Ketua Tim',
+                      })
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-blue-800 hover:bg-blue-50 whitespace-nowrap"
+                  >
+                    <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>+ Pemohon Utama</span>
+                  </button>
+                )}
+                {userMode === 'petugas' && (students.length > 0 || gtkList.length > 0) && (
+                  <button
+                    type="button"
+                    onClick={() => setBulkPickerOpen((v) => !v)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 whitespace-nowrap"
+                  >
+                    <Database className="h-3.5 w-3.5 text-blue-700" aria-hidden="true" />
+                    <span>{bulkPickerOpen ? 'Tutup Pilih Banyak' : 'Pilih Banyak Dapodik'}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setParticipants((prev) => [
+                      ...prev,
+                      {
+                        id: createParticipantId(),
+                        nama: '',
+                        identityNumber: '',
+                        classOrCohort: '',
+                        roleLabel: prev.length === 0 ? 'Ketua Tim' : 'Peserta',
+                      },
+                    ])
+                  }
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 whitespace-nowrap"
+                >
+                  <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Tambah Baris Manual</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Panel Pilih Banyak Siswa / GTK (Mode Petugas TU) */}
+            {bulkPickerOpen && userMode === 'petugas' && (students.length > 0 || gtkList.length > 0) && (
+              <div className="space-y-3 rounded-lg border border-slate-300 bg-white p-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+                    {students.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBulkTab('siswa');
+                          setBulkSelectedIds([]);
+                        }}
+                        className={`rounded px-2.5 py-1 text-xs font-semibold ${
+                          bulkTab === 'siswa' ? 'bg-slate-900 text-white' : 'text-slate-600'
+                        }`}
+                      >
+                        Siswa ({students.length})
+                      </button>
+                    )}
+                    {gtkList.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBulkTab('gtk');
+                          setBulkSelectedIds([]);
+                        }}
+                        className={`rounded px-2.5 py-1 text-xs font-semibold ${
+                          bulkTab === 'gtk' ? 'bg-slate-900 text-white' : 'text-slate-600'
+                        }`}
+                      >
+                        Guru / Tendik ({gtkList.length})
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={bulkSelectedIds.length === 0}
+                    onClick={handleCommitBulkSelection}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-800 disabled:bg-slate-300"
+                  >
+                    <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>Tambahkan ({bulkSelectedIds.length}) Terpilih</span>
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    type="text"
+                    value={bulkSearch}
+                    onChange={(e) => setBulkSearch(e.target.value)}
+                    placeholder={
+                      bulkTab === 'siswa'
+                        ? 'Filter nama siswa, NISN, atau kelas...'
+                        : 'Filter nama GTK, NIP, atau jabatan...'
+                    }
+                    className="h-9 min-w-[200px] flex-1 rounded-lg border border-slate-300 px-3 text-xs text-slate-900"
+                  />
+                  {bulkTab === 'siswa' && rombelOptions.length > 0 && (
+                    <select
+                      value={bulkRombelFilter}
+                      onChange={(e) => setBulkRombelFilter(e.target.value)}
+                      className="h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-800"
+                    >
+                      <option value="ALL">Semua Rombel</option>
+                      {rombelOptions.map((rb) => (
+                        <option key={rb} value={rb}>
+                          {rb}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                <div className="max-h-52 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100">
+                  {bulkTab === 'siswa' ? (
+                    filteredBulkStudents.map((st) => {
+                      const checked = bulkSelectedIds.includes(st.id);
+                      return (
+                        <label
+                          key={st.id}
+                          className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-xs hover:bg-slate-50"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() =>
+                                setBulkSelectedIds((prev) =>
+                                  checked ? prev.filter((id) => id !== st.id) : [...prev, st.id]
+                                )
+                              }
+                              className="h-4 w-4 rounded border-slate-300 text-blue-700"
+                            />
+                            <span className="truncate font-medium text-slate-900">{st.nama}</span>
+                          </div>
+                          <span className="shrink-0 font-mono text-[11px] text-slate-500">
+                            {st.nisn || st.nipd} · {st.rombelSaatIni}
+                          </span>
+                        </label>
+                      );
+                    })
+                  ) : (
+                    filteredBulkGtk.map((g) => {
+                      const checked = bulkSelectedIds.includes(g.id);
+                      return (
+                        <label
+                          key={g.id}
+                          className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-xs hover:bg-slate-50"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() =>
+                                setBulkSelectedIds((prev) =>
+                                  checked ? prev.filter((id) => id !== g.id) : [...prev, g.id]
+                                )
+                              }
+                              className="h-4 w-4 rounded border-slate-300 text-blue-700"
+                            />
+                            <span className="truncate font-medium text-slate-900">
+                              {formatPtkDisplayName(g) || g.nama}
+                            </span>
+                          </div>
+                          <span className="shrink-0 font-mono text-[11px] text-slate-500">
+                            {g.nip || g.nuptk || '-'} · {g.jabatanPtk || g.jenisPtk}
+                          </span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Cari & Tambah Satu per Satu via Lookup Dapodik */}
+            <div className="rounded-lg border border-blue-200 bg-white p-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <select
+                  value={memberLookupType}
+                  onChange={(e) => {
+                    setMemberLookupType(e.target.value as 'siswa' | 'gtk');
+                    setMemberStudentResults([]);
+                    setMemberGtkResults([]);
+                    setMemberHint('');
+                  }}
+                  aria-label="Tipe pencarian anggota peserta"
+                  className="h-9 rounded-lg border border-slate-300 bg-slate-50 px-2.5 text-xs font-medium text-slate-800"
+                >
+                  <option value="siswa">Cari Siswa (NIS/NISN)</option>
+                  <option value="gtk">Cari Guru/Tendik (NIP/Nama)</option>
+                </select>
+                <div className="flex flex-1 gap-2">
+                  <input
+                    type="text"
+                    value={memberQuery}
+                    onChange={(e) => setMemberQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void runMemberSearch();
+                      }
+                    }}
+                    placeholder={
+                      memberLookupType === 'siswa'
+                        ? 'Ketik NIS atau NISN peserta lomba untuk ditambahkan...'
+                        : 'Ketik NIP atau Nama guru/pembina yang ditugaskan...'
+                    }
+                    className="h-9 flex-1 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 placeholder:text-slate-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void runMemberSearch()}
+                    disabled={memberSearching}
+                    className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-100 px-3 text-xs font-semibold text-slate-800 hover:bg-slate-200 whitespace-nowrap"
+                  >
+                    {memberSearching ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Search className="h-3.5 w-3.5 text-blue-700" aria-hidden="true" />
+                    )}
+                    <span>Cari & Tambah</span>
+                  </button>
+                </div>
+              </div>
+
+              {memberHint && <p className="mt-2 text-xs text-amber-800">{memberHint}</p>}
+
+              {memberStudentResults.length > 0 && (
+                <div className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {memberStudentResults.map((st) => (
+                    <div
+                      key={st.id}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-slate-900">{st.nama}</p>
+                        <p className="font-mono text-[11px] text-slate-600">
+                          {st.nisn || st.nipd} · {st.rombelSaatIni}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          addParticipantRow({
+                            nama: st.nama,
+                            identityNumber: st.nisn || st.nipd || '-',
+                            classOrCohort: st.rombelSaatIni || '-',
+                            roleLabel: participants.length === 0 ? 'Ketua Tim' : 'Peserta',
+                          });
+                          setMemberQuery('');
+                          setMemberStudentResults([]);
+                        }}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-md bg-emerald-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-800"
+                      >
+                        <Plus className="h-3 w-3" aria-hidden="true" />
+                        <span>Tambah</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {memberGtkResults.length > 0 && (
+                <div className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {memberGtkResults.map((g) => (
+                    <div
+                      key={g.id}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-slate-900">
+                          {g.displayName || g.nama}
+                        </p>
+                        <p className="truncate font-mono text-[11px] text-slate-600">
+                          {g.nip || g.nuptk || '-'} · {g.jabatanPtk || g.jenisPtk}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          addParticipantRow({
+                            nama: g.displayName || g.nama,
+                            identityNumber: g.nip || g.nuptk || '-',
+                            classOrCohort: g.jabatanPtk || g.tugasTambahan || g.jenisPtk,
+                            roleLabel: 'Pelaksana / Guru',
+                          });
+                          setMemberQuery('');
+                          setMemberGtkResults([]);
+                        }}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-md bg-emerald-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-800"
+                      >
+                        <Plus className="h-3 w-3" aria-hidden="true" />
+                        <span>Tambah</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Tabel Rapi Daftar Peserta */}
+            <div className="overflow-x-auto rounded-lg border border-slate-300 bg-white">
+              <table className="w-full min-w-[680px] border-collapse text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-300 bg-slate-100 font-semibold text-slate-800">
+                    <th className="w-10 border-r border-slate-200 px-2.5 py-2 text-center">No</th>
+                    <th className="border-r border-slate-200 px-2.5 py-2">Nama Lengkap</th>
+                    <th className="w-40 border-r border-slate-200 px-2.5 py-2">NISN / NIS / NIP</th>
+                    <th className="w-36 border-r border-slate-200 px-2.5 py-2">Kelas / Jabatan</th>
+                    <th className="w-36 border-r border-slate-200 px-2.5 py-2">Peran / Ket.</th>
+                    <th className="w-24 px-2.5 py-2 text-center">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {participants.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-6 text-center text-xs text-slate-500">
+                        Belum ada peserta di tabel. Cari NIS/NISN atau NIP di atas, atau klik <strong>Tambah Baris Manual</strong>.
+                      </td>
+                    </tr>
+                  ) : (
+                    participants.map((p, idx) => (
+                      <tr key={p.id} className="hover:bg-slate-50/70">
+                        <td className="border-r border-slate-200 px-2 py-1.5 text-center font-mono tabular-nums text-slate-600">
+                          {idx + 1}
+                        </td>
+                        <td className="border-r border-slate-200 px-1.5 py-1">
+                          <input
+                            type="text"
+                            value={p.nama}
+                            onChange={(e) => updateParticipantCell(p.id, 'nama', e.target.value)}
+                            placeholder="Nama lengkap peserta"
+                            className="h-8 w-full rounded border border-transparent px-2 text-xs font-medium text-slate-900 hover:border-slate-300 focus:border-blue-600 focus:bg-white focus:outline-none"
+                          />
+                        </td>
+                        <td className="border-r border-slate-200 px-1.5 py-1">
+                          <input
+                            type="text"
+                            value={p.identityNumber}
+                            onChange={(e) =>
+                              updateParticipantCell(p.id, 'identityNumber', e.target.value)
+                            }
+                            placeholder="NISN / NIP"
+                            className="h-8 w-full rounded border border-transparent px-2 font-mono text-xs text-slate-800 hover:border-slate-300 focus:border-blue-600 focus:bg-white focus:outline-none"
+                          />
+                        </td>
+                        <td className="border-r border-slate-200 px-1.5 py-1">
+                          <input
+                            type="text"
+                            value={p.classOrCohort}
+                            onChange={(e) =>
+                              updateParticipantCell(p.id, 'classOrCohort', e.target.value)
+                            }
+                            placeholder="Kelas / Jabatan"
+                            className="h-8 w-full rounded border border-transparent px-2 text-xs text-slate-800 hover:border-slate-300 focus:border-blue-600 focus:bg-white focus:outline-none"
+                          />
+                        </td>
+                        <td className="border-r border-slate-200 px-1.5 py-1">
+                          <input
+                            type="text"
+                            value={p.roleLabel || ''}
+                            onChange={(e) =>
+                              updateParticipantCell(p.id, 'roleLabel', e.target.value)
+                            }
+                            placeholder="Ketua / Anggota / Pembina"
+                            className="h-8 w-full rounded border border-transparent px-2 text-xs text-slate-700 hover:border-slate-300 focus:border-blue-600 focus:bg-white focus:outline-none"
+                          />
+                        </td>
+                        <td className="px-1.5 py-1">
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => moveParticipant(idx, -1)}
+                              disabled={idx === 0}
+                              title="Geser naik"
+                              className="rounded p-1 text-slate-500 hover:bg-slate-200 disabled:opacity-30"
+                            >
+                              <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => moveParticipant(idx, 1)}
+                              disabled={idx === participants.length - 1}
+                              title="Geser turun"
+                              className="rounded p-1 text-slate-500 hover:bg-slate-200 disabled:opacity-30"
+                            >
+                              <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeParticipant(p.id)}
+                              title="Hapus baris"
+                              className="rounded p-1 text-red-600 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
         {/* Keperluan */}
         <div>
           <label htmlFor="purpose-input" className="block text-sm font-medium text-slate-800">
-            Keperluan & Tujuan Instansi Surat
+            Keperluan & Tujuan Instansi / Nama Kegiatan Lomba
           </label>
           <input
             id="purpose-input"
@@ -909,7 +1745,7 @@ export function SubmitRequestView({
             required
             value={purpose}
             onChange={(e) => setPurpose(e.target.value)}
-            placeholder="Tuliskan tujuan penggunaan surat atau dokumen secara jelas"
+            placeholder="Tuliskan tujuan penggunaan surat, nama lomba, tanggal pelaksanaan, atau lokasi penugasan"
             className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none"
           />
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -971,7 +1807,7 @@ export function SubmitRequestView({
             rows={3}
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="Misal: jumlah lembar legalisir, ejaan nama orang tua, atau jadwal pengambilan yang diinginkan."
+            placeholder="Misal: jadwal pelaksanaan lomba, jam dispensasi, atau catatan pembina pendamping."
             className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white p-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none"
           />
         </div>
@@ -990,7 +1826,11 @@ export function SubmitRequestView({
             ) : (
               <>
                 <Send className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <span>Kirim Permohonan Layanan</span>
+                <span>
+                  {isGroupMode && participants.length > 1
+                    ? `Kirim Permohonan (${participants.length} Peserta)`
+                    : 'Kirim Permohonan Layanan'}
+                </span>
               </>
             )}
           </button>
@@ -1038,7 +1878,7 @@ export function SubmitRequestView({
           <h4 className="font-semibold text-slate-900">Alur Verifikasi Loket TU</h4>
           <ol className="mt-2.5 list-decimal space-y-2 pl-4 text-xs leading-relaxed">
             <li>Masukkan NIS/NISN (Siswa) atau NIP/Nama (GTK) untuk menarik identitas resmi Dapodik.</li>
-            <li>Setelah mengirim formulir, Anda memperoleh Kode Tiket dan permohonan langsung masuk ke meja Petugas TU.</li>
+            <li>Untuk tim lomba atau surat tugas kolektif, aktifkan mode <strong>Berkelompok / Multiple</strong> agar seluruh peserta terdata rapi dalam tabel.</li>
             <li>Jika status berubah menjadi <strong className="text-slate-800">Siap Diambil</strong>, bawa berkas fisik pendukung ke Ruang Tata Usaha SMAN 9 Surabaya.</li>
           </ol>
         </div>

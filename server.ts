@@ -12,6 +12,7 @@ import type {
   KopSuratConfig,
   KopSuratMode,
   ReportingPortalConfig,
+  RequestParticipant,
   ServiceRequest,
 } from './src/types/tu.ts';
 import { applyDispendukcapilCheck, formatPtkDisplayName } from './src/utils/gtkDapodikValidation.ts';
@@ -368,10 +369,33 @@ function maskIdentityNumber(idNum: string): string {
   return `${'*'.repeat(Math.max(trimmed.length - 4, 4))}${trimmed.slice(-4)}`;
 }
 
+function sanitizeParticipants(raw: unknown): RequestParticipant[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const cleaned = raw
+    .filter((item): item is Partial<RequestParticipant> => Boolean(item && typeof item === 'object'))
+    .map((item, idx) => ({
+      id: typeof item.id === 'string' && item.id.trim() ? item.id.trim() : `part-${Date.now()}-${idx}`,
+      nama: typeof item.nama === 'string' ? item.nama.trim().slice(0, 160) : '',
+      identityNumber:
+        typeof item.identityNumber === 'string' ? item.identityNumber.trim().slice(0, 40) : '',
+      classOrCohort:
+        typeof item.classOrCohort === 'string' ? item.classOrCohort.trim().slice(0, 120) : '-',
+      roleLabel: typeof item.roleLabel === 'string' ? item.roleLabel.trim().slice(0, 80) : '',
+    }))
+    .filter((item) => item.nama.length > 0);
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
 function toPublicRequest(req: ServiceRequest): ServiceRequest {
   return {
     ...req,
     identityNumber: maskIdentityNumber(req.identityNumber),
+    participants: Array.isArray(req.participants)
+      ? req.participants.map((p) => ({
+          ...p,
+          identityNumber: maskIdentityNumber(p.identityNumber),
+        }))
+      : undefined,
     phone: '',
     notes: '',
     submittedRequirements: [],
@@ -662,6 +686,14 @@ async function startServer() {
         if (qDigits.length >= 4 && item.identityNumber.replace(/\D/g, '') === qDigits) {
           return true;
         }
+        if (Array.isArray(item.participants)) {
+          return item.participants.some((p) => {
+            const pId = p.identityNumber.trim().toLowerCase();
+            if (pId === q) return true;
+            if (qDigits.length >= 4 && p.identityNumber.replace(/\D/g, '') === qDigits) return true;
+            return false;
+          });
+        }
         return false;
       })
       .map(toPublicRequest);
@@ -709,6 +741,8 @@ async function startServer() {
       const nextNumber = maxSeq + 1;
       const ticketId = `TU-2026-${String(nextNumber).padStart(4, '0')}`;
 
+      const participants = sanitizeParticipants(body.participants);
+
       const newReq: ServiceRequest = {
         id: ticketId,
         serviceId: body.serviceId,
@@ -720,6 +754,7 @@ async function startServer() {
         phone: body.phone.trim(),
         purpose: body.purpose.trim(),
         notes: (body.notes || '').trim(),
+        participants,
         submittedRequirements: Array.isArray(body.submittedRequirements)
           ? body.submittedRequirements.filter((x): x is string => typeof x === 'string')
           : [],
@@ -737,7 +772,9 @@ async function startServer() {
             timestamp: nowIso,
             status: 'Diajukan',
             actor: body.applicantName.trim(),
-            note: `Permohonan ${body.serviceTitle.trim()} diajukan secara daring melalui SIP TU SMAN 9 Surabaya.`,
+            note: `Permohonan ${body.serviceTitle.trim()}${
+              participants && participants.length > 1 ? ` (${participants.length} peserta)` : ''
+            } diajukan secara daring melalui SIP TU SMAN 9 Surabaya.`,
           },
         ],
       };
@@ -821,7 +858,10 @@ async function startServer() {
           updated.letterNumber || `421.3/${outCount}/101.6.1.9/2026`,
         letterDate: nowIso.slice(0, 10),
         recordedDate: nowIso.slice(0, 10),
-        counterparty: `${updated.applicantName} (${updated.classOrCohort})`,
+        counterparty:
+          updated.participants && updated.participants.length > 1
+            ? `${updated.applicantName} dkk (${updated.participants.length} orang)`
+            : `${updated.applicantName} (${updated.classOrCohort})`,
         subject: `${updated.serviceTitle} — ${updated.purpose}`,
         classification: 'Biasa',
         disposition: 'Tercatat otomatis dari pelayanan tiket SIP TU.',
@@ -832,6 +872,84 @@ async function startServer() {
 
     writeStore(store);
     res.json({ request: updated, createdAgenda });
+  });
+
+  app.put('/api/requests/:id', requirePetugasAuth, (req: Request, res: Response) => {
+    const { id } = req.params;
+    const body = req.body as Partial<ServiceRequest>;
+    if (
+      typeof body?.applicantName !== 'string' ||
+      !body.applicantName.trim() ||
+      typeof body?.identityNumber !== 'string' ||
+      !body.identityNumber.trim() ||
+      typeof body?.purpose !== 'string' ||
+      !body.purpose.trim()
+    ) {
+      res.status(400).json({ error: 'Nama pemohon, NISN/NIP, dan keperluan wajib diisi.' });
+      return;
+    }
+
+    const store = readStore();
+    const idx = store.requests.findIndex((r) => r.id === id);
+    if (idx < 0) {
+      res.status(404).json({ error: 'Tiket permohonan tidak ditemukan.' });
+      return;
+    }
+
+    const existing = store.requests[idx];
+    const nowIso = new Date().toISOString();
+    const participants = sanitizeParticipants(body.participants);
+
+    const updated: ServiceRequest = {
+      ...existing,
+      serviceId: body.serviceId || existing.serviceId,
+      serviceTitle:
+        typeof body.serviceTitle === 'string' && body.serviceTitle.trim()
+          ? body.serviceTitle.trim()
+          : existing.serviceTitle,
+      applicantName: body.applicantName.trim(),
+      applicantRole: body.applicantRole || existing.applicantRole,
+      identityNumber: body.identityNumber.trim(),
+      classOrCohort:
+        typeof body.classOrCohort === 'string' && body.classOrCohort.trim()
+          ? body.classOrCohort.trim()
+          : '-',
+      phone:
+        typeof body.phone === 'string' && body.phone.trim()
+          ? body.phone.trim()
+          : existing.phone,
+      purpose: body.purpose.trim(),
+      notes: typeof body.notes === 'string' ? body.notes.trim() : existing.notes,
+      participants,
+      updatedAt: nowIso,
+      timeline: [
+        ...existing.timeline,
+        {
+          id: `tl-${Date.now()}`,
+          timestamp: nowIso,
+          status: existing.status,
+          actor: (res.locals.petugas as SessionPayload | undefined)?.staffName || 'Sulistyowati, S.Pd.',
+          note: 'Data ajuan permohonan disunting oleh Petugas Tata Usaha.',
+        },
+      ],
+    };
+
+    store.requests[idx] = updated;
+    writeStore(store);
+    res.json({ request: updated });
+  });
+
+  app.delete('/api/requests/:id', requirePetugasAuth, (req: Request, res: Response) => {
+    const { id } = req.params;
+    const store = readStore();
+    const exists = store.requests.some((r) => r.id === id);
+    if (!exists) {
+      res.status(404).json({ error: 'Tiket permohonan tidak ditemukan.' });
+      return;
+    }
+    store.requests = store.requests.filter((r) => r.id !== id);
+    writeStore(store);
+    res.json({ ok: true, id });
   });
 
   // Protected Dapodik Student Database Routes

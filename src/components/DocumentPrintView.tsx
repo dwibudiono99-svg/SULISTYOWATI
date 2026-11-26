@@ -615,7 +615,12 @@ export function DocumentPrintView({
                             {item.id}
                           </td>
                           <td className="border border-slate-300 px-2 py-1.5">
-                            <span className="font-medium">{item.applicantName}</span>
+                            <span className="font-medium">
+                              {item.applicantName}
+                              {Array.isArray(item.participants) && item.participants.length > 1
+                                ? ` dkk (${item.participants.length} peserta)`
+                                : ''}
+                            </span>
                             <span className="block text-[10px] text-slate-600">
                               {item.classOrCohort || item.applicantRole}
                             </span>
@@ -717,78 +722,144 @@ export function DocumentPrintView({
               </div>
             </div>
           ) : docMode === 'surat' && activeReq ? (
-            <div className="mt-8 space-y-6 text-sm leading-relaxed text-slate-900">
-              <div className="text-center">
-                <h3 className="text-base font-bold uppercase underline underline-offset-4">
-                  {activeReq.serviceId === 'surat-tugas'
-                    ? 'SURAT TUGAS'
-                    : activeReq.serviceId === 'izin-kegiatan'
-                      ? 'SURAT DISPENSASI KEGIATAN'
-                      : activeReq.serviceId === 'rekomendasi'
-                        ? 'SURAT REKOMENDASI'
-                        : 'SURAT KETERANGAN'}
-                </h3>
-                <p className="mt-1 font-mono text-xs text-slate-700">
-                  Nomor : {displayLetterNo}
-                </p>
-              </div>
+            (() => {
+              const groupParticipants =
+                Array.isArray(activeReq.participants) && activeReq.participants.length > 1
+                  ? activeReq.participants
+                  : null;
+              const isGroupAssignment = Boolean(groupParticipants);
+              const introSentence = isGroupAssignment
+                ? activeReq.serviceId === 'surat-tugas'
+                  ? 'Yang bertanda tangan di bawah ini Kepala SMA Negeri 9 Surabaya, Kota Surabaya, Provinsi Jawa Timur menugaskan kepada nama-nama tersebut di bawah ini :'
+                  : activeReq.serviceId === 'izin-kegiatan'
+                    ? 'Yang bertanda tangan di bawah ini Kepala SMA Negeri 9 Surabaya, Kota Surabaya, Provinsi Jawa Timur memberikan izin / dispensasi kegiatan kepada peserta didik dan/atau pembina berikut :'
+                    : activeReq.serviceId === 'rekomendasi'
+                      ? 'Yang bertanda tangan di bawah ini Kepala SMA Negeri 9 Surabaya, Kota Surabaya, Provinsi Jawa Timur memberikan rekomendasi untuk mengikuti kegiatan kepada nama-nama berikut :'
+                      : 'Yang bertanda tangan di bawah ini Kepala SMA Negeri 9 Surabaya, Kota Surabaya, Provinsi Jawa Timur menerangkan dengan sesungguhnya bahwa nama-nama berikut :'
+                : 'Yang bertanda tangan di bawah ini Kepala SMA Negeri 9 Surabaya, Kota Surabaya, Provinsi Jawa Timur menerangkan dengan sesungguhnya bahwa :';
 
-              <p>
-                Yang bertanda tangan di bawah ini Kepala SMA Negeri 9 Surabaya, Kota Surabaya, Provinsi Jawa Timur menerangkan dengan sesungguhnya bahwa :
-              </p>
+              return (
+                <div className="mt-8 space-y-6 text-sm leading-relaxed text-slate-900">
+                  <div className="text-center">
+                    <h3 className="text-base font-bold uppercase underline underline-offset-4">
+                      {activeReq.serviceId === 'surat-tugas'
+                        ? 'SURAT TUGAS'
+                        : activeReq.serviceId === 'izin-kegiatan'
+                          ? 'SURAT DISPENSASI KEGIATAN'
+                          : activeReq.serviceId === 'rekomendasi'
+                            ? 'SURAT REKOMENDASI'
+                            : 'SURAT KETERANGAN'}
+                    </h3>
+                    <p className="mt-1 font-mono text-xs text-slate-700">
+                      Nomor : {displayLetterNo}
+                    </p>
+                  </div>
 
-              <table className="w-full max-w-xl text-sm">
-                <tbody className="align-top">
-                  <tr>
-                    <td className="w-44 py-1 text-slate-700">Nama Lengkap</td>
-                    <td className="w-4 py-1">:</td>
-                    <td className="py-1 font-semibold">{activeReq.applicantName}</td>
-                  </tr>
-                  <tr>
-                    <td className="py-1 text-slate-700">
-                      {activeReq.applicantRole === 'Guru / Tendik' ? 'NIP / NUPTK' : 'NISN / NIS'}
-                    </td>
-                    <td className="py-1">:</td>
-                    <td className="py-1 font-mono tabular-nums">{activeReq.identityNumber}</td>
-                  </tr>
-                  <tr>
-                    <td className="py-1 text-slate-700">Status / Kelas / Unit</td>
-                    <td className="py-1">:</td>
-                    <td className="py-1">
-                      {activeReq.applicantRole} — {activeReq.classOrCohort}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td className="py-1 text-slate-700">Instansi / Sekolah</td>
-                    <td className="py-1">:</td>
-                    <td className="py-1">SMA Negeri 9 Surabaya</td>
-                  </tr>
-                </tbody>
-              </table>
+                  <p>{introSentence}</p>
 
-              <p>
-                Berdasarkan data pokok administrasi Tata Usaha SMA Negeri 9 Surabaya, yang bersangkutan tercatat secara resmi dan permohonan layanan{' '}
-                <strong>{activeReq.serviceTitle}</strong> ini diterbitkan untuk keperluan:{' '}
-                <strong>{activeReq.purpose}</strong>.
-              </p>
+                  {groupParticipants ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full border-collapse border border-slate-800 text-left text-xs">
+                        <thead>
+                          <tr className="bg-slate-100 font-bold text-slate-900">
+                            <th className="w-10 border border-slate-800 px-2.5 py-2 text-center">No</th>
+                            <th className="border border-slate-800 px-2.5 py-2">Nama Lengkap</th>
+                            <th className="border border-slate-800 px-2.5 py-2">NISN / NIS / NIP</th>
+                            <th className="border border-slate-800 px-2.5 py-2">Kelas / Jabatan</th>
+                            <th className="border border-slate-800 px-2.5 py-2">Keterangan</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {groupParticipants.map((p, idx) => (
+                            <tr key={p.id}>
+                              <td className="border border-slate-800 px-2.5 py-1.5 text-center font-mono tabular-nums">
+                                {idx + 1}
+                              </td>
+                              <td className="border border-slate-800 px-2.5 py-1.5 font-semibold">
+                                {p.nama}
+                              </td>
+                              <td className="border border-slate-800 px-2.5 py-1.5 font-mono tabular-nums">
+                                {p.identityNumber || '-'}
+                              </td>
+                              <td className="border border-slate-800 px-2.5 py-1.5">
+                                {p.classOrCohort || '-'}
+                              </td>
+                              <td className="border border-slate-800 px-2.5 py-1.5">
+                                {p.roleLabel || 'Peserta'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <table className="w-full max-w-xl text-sm">
+                      <tbody className="align-top">
+                        <tr>
+                          <td className="w-44 py-1 text-slate-700">Nama Lengkap</td>
+                          <td className="w-4 py-1">:</td>
+                          <td className="py-1 font-semibold">{activeReq.applicantName}</td>
+                        </tr>
+                        <tr>
+                          <td className="py-1 text-slate-700">
+                            {activeReq.applicantRole === 'Guru / Tendik' ? 'NIP / NUPTK' : 'NISN / NIS'}
+                          </td>
+                          <td className="py-1">:</td>
+                          <td className="py-1 font-mono tabular-nums">{activeReq.identityNumber}</td>
+                        </tr>
+                        <tr>
+                          <td className="py-1 text-slate-700">Status / Kelas / Unit</td>
+                          <td className="py-1">:</td>
+                          <td className="py-1">
+                            {activeReq.applicantRole} — {activeReq.classOrCohort}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="py-1 text-slate-700">Instansi / Sekolah</td>
+                          <td className="py-1">:</td>
+                          <td className="py-1">SMA Negeri 9 Surabaya</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  )}
 
-              <p>
-                Demikian surat keterangan ini dibuat dengan sebenarnya agar dapat dipergunakan sebagaimana mestinya.
-              </p>
-
-              <div className="flex justify-end pt-8">
-                <div className="w-64 text-sm">
                   <p>
-                    {kopSurat.cityName || 'Surabaya'},{' '}
-                    {formatTanggalSuratResmi(activeReq.updatedAt || new Date().toISOString())}
+                    {isGroupAssignment ? (
+                      <>
+                        Berdasarkan data administrasi Tata Usaha SMA Negeri 9 Surabaya, nama-nama tersebut di atas ({groupParticipants!.length} orang) secara resmi tercatat dan diterbitkan surat{' '}
+                        <strong>{activeReq.serviceTitle}</strong> untuk keperluan/kegiatan:{' '}
+                        <strong>{activeReq.purpose}</strong>.
+                      </>
+                    ) : (
+                      <>
+                        Berdasarkan data pokok administrasi Tata Usaha SMA Negeri 9 Surabaya, yang bersangkutan tercatat secara resmi dan permohonan layanan{' '}
+                        <strong>{activeReq.serviceTitle}</strong> ini diterbitkan untuk keperluan:{' '}
+                        <strong>{activeReq.purpose}</strong>.
+                      </>
+                    )}
                   </p>
-                  <p className="mt-0.5 font-medium">{kopSurat.principalTitle || 'Kepala Sekolah,'}</p>
-                  <div className="h-20" />
-                  <p className="font-bold underline underline-offset-2">{principalName}</p>
-                  <p className="font-mono text-xs text-slate-700">NIP. {principalNip}</p>
+
+                  <p>
+                    {isGroupAssignment
+                      ? 'Demikian surat ini dibuat dengan sebenarnya agar dapat dilaksanakan penuh tanggung jawab dan dipergunakan sebagaimana mestinya.'
+                      : 'Demikian surat keterangan ini dibuat dengan sebenarnya agar dapat dipergunakan sebagaimana mestinya.'}
+                  </p>
+
+                  <div className="flex justify-end pt-8">
+                    <div className="w-64 text-sm">
+                      <p>
+                        {kopSurat.cityName || 'Surabaya'},{' '}
+                        {formatTanggalSuratResmi(activeReq.updatedAt || new Date().toISOString())}
+                      </p>
+                      <p className="mt-0.5 font-medium">{kopSurat.principalTitle || 'Kepala Sekolah,'}</p>
+                      <div className="h-20" />
+                      <p className="font-bold underline underline-offset-2">{principalName}</p>
+                      <p className="font-mono text-xs text-slate-700">NIP. {principalNip}</p>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
+              );
+            })()
           ) : activeReq ? (
             <div className="mt-8 space-y-6 text-sm text-slate-900">
               <div className="text-center">
@@ -803,8 +874,13 @@ export function DocumentPrintView({
               <div className="rounded-lg border border-slate-300 p-4">
                 <dl className="grid grid-cols-1 gap-y-2.5 text-sm sm:grid-cols-2">
                   <div>
-                    <dt className="text-xs text-slate-500">Nama Pemohon</dt>
-                    <dd className="font-semibold">{activeReq.applicantName}</dd>
+                    <dt className="text-xs text-slate-500">Nama Pemohon / Penanggung Jawab</dt>
+                    <dd className="font-semibold">
+                      {activeReq.applicantName}
+                      {Array.isArray(activeReq.participants) && activeReq.participants.length > 1
+                        ? ` dkk (${activeReq.participants.length} peserta)`
+                        : ''}
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-xs text-slate-500">NISN / NIS / NIP</dt>
@@ -836,6 +912,40 @@ export function DocumentPrintView({
                   </div>
                 </dl>
               </div>
+
+              {Array.isArray(activeReq.participants) && activeReq.participants.length > 1 && (
+                <div>
+                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-700">
+                    Daftar Peserta Tercatat ({activeReq.participants.length} Orang):
+                  </h4>
+                  <table className="w-full border-collapse border border-slate-300 text-left text-xs">
+                    <thead>
+                      <tr className="bg-slate-100 font-semibold text-slate-800">
+                        <th className="w-9 border border-slate-300 px-2 py-1.5 text-center">No</th>
+                        <th className="border border-slate-300 px-2 py-1.5">Nama Lengkap</th>
+                        <th className="border border-slate-300 px-2 py-1.5">NISN / NIP</th>
+                        <th className="border border-slate-300 px-2 py-1.5">Kelas / Jabatan</th>
+                        <th className="border border-slate-300 px-2 py-1.5">Peran</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeReq.participants.map((p, idx) => (
+                        <tr key={p.id}>
+                          <td className="border border-slate-300 px-2 py-1.5 text-center font-mono tabular-nums">
+                            {idx + 1}
+                          </td>
+                          <td className="border border-slate-300 px-2 py-1.5 font-medium">{p.nama}</td>
+                          <td className="border border-slate-300 px-2 py-1.5 font-mono tabular-nums">
+                            {p.identityNumber || '-'}
+                          </td>
+                          <td className="border border-slate-300 px-2 py-1.5">{p.classOrCohort || '-'}</td>
+                          <td className="border border-slate-300 px-2 py-1.5">{p.roleLabel || 'Peserta'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
               <div>
                 <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-700">

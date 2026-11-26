@@ -1,14 +1,17 @@
-import { FilePlus2, RefreshCw, Search } from 'lucide-react';
+import { FilePlus2, Pencil, RefreshCw, Search, Trash2, Users } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { TU_SERVICE_CATALOG } from '../config/schoolConfig';
-import { RequestStatus, ServiceRequest } from '../types/tu';
+import { RequestStatus, ServiceRequest, UserMode } from '../types/tu';
 import { formatTanggalIndonesia } from '../utils/formatters';
 import { StatusIndicator } from './StatusIndicator';
 
 interface QueueTrackingViewProps {
   requests: ServiceRequest[];
+  userMode?: UserMode;
   initialSearch?: string;
   onSelectRequest: (request: ServiceRequest) => void;
+  onEditRequestOpen?: (request: ServiceRequest) => void;
+  onDeleteRequest?: (requestId: string) => Promise<boolean>;
   onNavigateCreate: () => void;
   onTrackExact?: (query: string) => Promise<ServiceRequest | null>;
   onRefresh?: () => Promise<void> | void;
@@ -27,8 +30,11 @@ const STATUS_FILTERS: { label: string; value: 'ALL' | RequestStatus }[] = [
 
 export function QueueTrackingView({
   requests,
+  userMode = 'pemohon',
   initialSearch = '',
   onSelectRequest,
+  onEditRequestOpen,
+  onDeleteRequest,
   onNavigateCreate,
   onTrackExact,
   onRefresh,
@@ -37,6 +43,8 @@ export function QueueTrackingView({
   const [statusFilter, setStatusFilter] = useState<'ALL' | RequestStatus>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     setSearchQuery(initialSearch);
@@ -58,16 +66,27 @@ export function QueueTrackingView({
         if (statusFilter !== 'ALL' && req.status !== statusFilter) return false;
         if (categoryFilter !== 'ALL' && req.serviceId !== categoryFilter) return false;
         if (!q) return true;
+        const participantMatch =
+          Array.isArray(req.participants) &&
+          req.participants.some(
+            (p) =>
+              p.nama.toLowerCase().includes(q) ||
+              p.identityNumber.toLowerCase().includes(q) ||
+              p.classOrCohort.toLowerCase().includes(q)
+          );
         return (
           req.id.toLowerCase().includes(q) ||
           req.applicantName.toLowerCase().includes(q) ||
           req.identityNumber.toLowerCase().includes(q) ||
           req.purpose.toLowerCase().includes(q) ||
-          (req.letterNumber?.toLowerCase().includes(q) ?? false)
+          (req.letterNumber?.toLowerCase().includes(q) ?? false) ||
+          participantMatch
         );
       })
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }, [requests, searchQuery, statusFilter, categoryFilter]);
+
+  const isPetugas = userMode === 'petugas';
 
   return (
     <div className="space-y-5">
@@ -82,7 +101,7 @@ export function QueueTrackingView({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Cari kode tiket, nama pemohon, NISN/NIP, atau nomor surat..."
+              placeholder="Cari kode tiket, nama pemohon/peserta, NISN/NIP, atau nomor surat..."
               aria-label="Cari antrean permohonan"
               className="h-10 w-full rounded-lg border border-slate-300 bg-white pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none"
             />
@@ -176,7 +195,7 @@ export function QueueTrackingView({
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-          <table className="w-full min-w-[820px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[860px] border-collapse text-left text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
                 <th className="px-4 py-3">Kode Tiket</th>
@@ -185,41 +204,118 @@ export function QueueTrackingView({
                 <th className="px-4 py-3">Nomor Surat</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3 text-right">Tanggal Masuk</th>
+                {isPetugas && <th className="px-4 py-3 text-center">Aksi TU</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredRequests.map((req) => (
-                <tr
-                  key={req.id}
-                  onClick={() => onSelectRequest(req)}
-                  className="cursor-pointer transition-colors hover:bg-slate-50"
-                >
-                  <td className="px-4 py-3 font-mono text-xs font-semibold tabular-nums text-blue-700 whitespace-nowrap">
-                    {req.id}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-slate-900">{req.applicantName}</div>
-                    <div className="mt-0.5 font-mono text-xs tabular-nums text-slate-500">
-                      {req.applicantRole} · {req.identityNumber} · {req.classOrCohort}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-slate-800">{req.serviceTitle}</div>
-                    <div className="mt-0.5 line-clamp-1 max-w-xs text-xs text-slate-500">
-                      {req.purpose}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs tabular-nums text-slate-600 whitespace-nowrap">
-                    {req.letterNumber ?? '—'}
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusIndicator status={req.status} />
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono text-xs tabular-nums text-slate-500 whitespace-nowrap">
-                    {formatTanggalIndonesia(req.createdAt)}
-                  </td>
-                </tr>
-              ))}
+              {filteredRequests.map((req) => {
+                const participantCount =
+                  Array.isArray(req.participants) && req.participants.length > 1
+                    ? req.participants.length
+                    : 0;
+                const isConfirming = confirmDeleteId === req.id;
+
+                return (
+                  <tr
+                    key={req.id}
+                    onClick={() => onSelectRequest(req)}
+                    className="cursor-pointer transition-colors hover:bg-slate-50"
+                  >
+                    <td className="px-4 py-3 font-mono text-xs font-semibold tabular-nums text-blue-700 whitespace-nowrap">
+                      {req.id}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-medium text-slate-900">{req.applicantName}</span>
+                        {participantCount > 0 && (
+                          <span className="inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-800 whitespace-nowrap">
+                            <Users className="h-3 w-3" aria-hidden="true" />
+                            <span>Berkelompok · {participantCount} Peserta</span>
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 font-mono text-xs tabular-nums text-slate-500">
+                        {req.applicantRole} · {req.identityNumber} · {req.classOrCohort}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-800">{req.serviceTitle}</div>
+                      <div className="mt-0.5 line-clamp-1 max-w-xs text-xs text-slate-500">
+                        {req.purpose}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs tabular-nums text-slate-600 whitespace-nowrap">
+                      {req.letterNumber ?? '—'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusIndicator status={req.status} />
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono text-xs tabular-nums text-slate-500 whitespace-nowrap">
+                      {formatTanggalIndonesia(req.createdAt)}
+                    </td>
+                    {isPetugas && (
+                      <td
+                        className="px-4 py-3 text-center whitespace-nowrap"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {isConfirming ? (
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={deletingId === req.id}
+                              onClick={async () => {
+                                if (!onDeleteRequest) return;
+                                setDeletingId(req.id);
+                                try {
+                                  await onDeleteRequest(req.id);
+                                  setConfirmDeleteId(null);
+                                } finally {
+                                  setDeletingId(null);
+                                }
+                              }}
+                              className="rounded bg-red-700 px-2 py-1 text-[11px] font-semibold text-white hover:bg-red-800 disabled:bg-red-400"
+                            >
+                              {deletingId === req.id ? '...' : 'Hapus'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(null)}
+                              className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                            >
+                              Batal
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="inline-flex items-center gap-1.5">
+                            {onEditRequestOpen && (
+                              <button
+                                type="button"
+                                onClick={() => onEditRequestOpen(req)}
+                                title="Edit ajuan surat"
+                                className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                              >
+                                <Pencil className="h-3 w-3" aria-hidden="true" />
+                                <span>Edit</span>
+                              </button>
+                            )}
+                            {onDeleteRequest && (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(req.id)}
+                                title="Hapus ajuan surat"
+                                className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-100"
+                              >
+                                <Trash2 className="h-3 w-3" aria-hidden="true" />
+                                <span>Hapus</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

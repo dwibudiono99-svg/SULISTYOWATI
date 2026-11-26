@@ -147,6 +147,14 @@ export interface TimelineEvent {
   note: string;
 }
 
+export interface RequestParticipant {
+  id: string;
+  nama: string;
+  identityNumber: string;
+  classOrCohort: string;
+  roleLabel?: string;
+}
+
 export interface ServiceRequest {
   id: string;
   serviceId: ServiceCategoryId;
@@ -158,6 +166,7 @@ export interface ServiceRequest {
   phone: string;
   purpose: string;
   notes: string;
+  participants?: RequestParticipant[];
   submittedRequirements: string[];
   status: RequestStatus;
   letterNumber?: string;

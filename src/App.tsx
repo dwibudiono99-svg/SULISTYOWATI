@@ -10,7 +10,7 @@ import { OverviewView } from './components/OverviewView';
 import { PetugasTokenGateModal, TuAuthStatus } from './components/PetugasTokenGateModal';
 import { QueueTrackingView } from './components/QueueTrackingView';
 import { ReportingControlModal } from './components/ReportingControlModal';
-import { RequestDetailDrawer } from './components/RequestDetailDrawer';
+import { EditRequestPayload, RequestDetailDrawer } from './components/RequestDetailDrawer';
 import { RombelWaliKelasView } from './components/RombelWaliKelasView';
 import { Sidebar } from './components/Sidebar';
 import { SubmitRequestView } from './components/SubmitRequestView';
@@ -68,6 +68,7 @@ export default function App() {
   const [prefillGtk, setPrefillGtk] = useState<DapodikGtk | null>(null);
   const [queueSearchInitial, setQueueSearchInitial] = useState('');
   const [inspectedRequestId, setInspectedRequestId] = useState<string | null>(null);
+  const [drawerInitialEdit, setDrawerInitialEdit] = useState(false);
   const [printTargetId, setPrintTargetId] = useState<string | undefined>(undefined);
   const [printDocMode, setPrintDocMode] = useState<PrintDocumentMode>('tanda-terima');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -387,6 +388,71 @@ export default function App() {
       setToastMessage(`Status tiket ${requestId} diperbarui menjadi ${newStatus}.`);
     } catch {
       setToastMessage('Terjadi kesalahan saat menyimpan status tiket.');
+    }
+  };
+
+  const handleEditRequest = async (
+    requestId: string,
+    payload: EditRequestPayload
+  ): Promise<boolean> => {
+    if (!sessionToken) {
+      void requestPetugasAccess('antrean');
+      return false;
+    }
+    try {
+      const res = await fetch(`/api/requests/${encodeURIComponent(requestId)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir. Silakan verifikasi token kembali.');
+        return false;
+      }
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+        setToastMessage(errBody?.error || 'Gagal memperbarui ajuan surat.');
+        return false;
+      }
+      const updated = (await res.json()) as ServiceRequest;
+      setRequests((prev) => prev.map((r) => (r.id === requestId ? updated : r)));
+      setToastMessage(`Ajuan surat ${requestId} berhasil diperbarui.`);
+      return true;
+    } catch {
+      setToastMessage('Terjadi gangguan koneksi saat memperbarui ajuan surat.');
+      return false;
+    }
+  };
+
+  const handleDeleteRequest = async (requestId: string): Promise<boolean> => {
+    if (!sessionToken) {
+      void requestPetugasAccess('antrean');
+      return false;
+    }
+    try {
+      const res = await fetch(`/api/requests/${encodeURIComponent(requestId)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir. Silakan verifikasi token kembali.');
+        return false;
+      }
+      if (!res.ok) {
+        setToastMessage('Gagal menghapus ajuan surat.');
+        return false;
+      }
+      setRequests((prev) => prev.filter((r) => r.id !== requestId));
+      setInspectedRequestId((curr) => (curr === requestId ? null : curr));
+      setDrawerInitialEdit(false);
+      setToastMessage(`Ajuan surat ${requestId} berhasil dihapus dari sistem.`);
+      return true;
+    } catch {
+      setToastMessage('Terjadi gangguan koneksi saat menghapus ajuan surat.');
+      return false;
     }
   };
 
@@ -918,8 +984,17 @@ export default function App() {
           {activeTab === 'antrean' && (
             <QueueTrackingView
               requests={requests}
+              userMode={userMode}
               initialSearch={queueSearchInitial}
-              onSelectRequest={(req) => setInspectedRequestId(req.id)}
+              onSelectRequest={(req) => {
+                setDrawerInitialEdit(false);
+                setInspectedRequestId(req.id);
+              }}
+              onEditRequestOpen={(req) => {
+                setDrawerInitialEdit(true);
+                setInspectedRequestId(req.id);
+              }}
+              onDeleteRequest={handleDeleteRequest}
               onNavigateCreate={() => setActiveTab('ajukan')}
               onTrackExact={handleTrackExact}
               onRefresh={refreshCurrentRequests}
@@ -1093,8 +1168,14 @@ export default function App() {
         request={inspectedRequest}
         userMode={userMode}
         totalLettersCount={agendaEntries.filter((e) => e.type === 'Surat Keluar').length}
-        onClose={() => setInspectedRequestId(null)}
+        initialEditMode={drawerInitialEdit}
+        onClose={() => {
+          setInspectedRequestId(null);
+          setDrawerInitialEdit(false);
+        }}
         onUpdateStatus={handleUpdateStatus}
+        onEditRequest={handleEditRequest}
+        onDeleteRequest={handleDeleteRequest}
         onOpenPrintForRequest={handleOpenPrintForRequest}
       />
 
