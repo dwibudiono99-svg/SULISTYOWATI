@@ -30,7 +30,7 @@ interface DapodikDatabaseViewProps {
   userMode: UserMode;
   onSaveStudent: (student: DapodikStudent, isNew: boolean) => void;
   onDeleteStudent: (id: string) => void;
-  onImportStudents: (imported: DapodikStudent[], mode: ImportMergeMode) => void;
+  onImportStudents: (imported: DapodikStudent[], mode: ImportMergeMode) => Promise<boolean | void> | void;
   onCreateLetterFromStudent: (student: DapodikStudent, serviceId: ServiceCategoryId) => void;
 }
 

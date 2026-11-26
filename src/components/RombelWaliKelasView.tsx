@@ -34,7 +34,7 @@ interface RombelWaliKelasViewProps {
   userMode: UserMode;
   onSaveRombel: (rombel: DapodikRombel, isNew: boolean) => void;
   onDeleteRombel: (id: string) => void;
-  onImportRombels: (imported: DapodikRombel[], mode: ImportMergeMode) => void;
+  onImportRombels: (imported: DapodikRombel[], mode: ImportMergeMode) => Promise<boolean | void> | void;
   onSaveStudent: (student: DapodikStudent, isNew: boolean) => void;
   onDeleteStudent: (id: string) => void;
   onCreateLetterFromStudent: (student: DapodikStudent, serviceId: ServiceCategoryId) => void;

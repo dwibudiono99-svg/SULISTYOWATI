@@ -222,6 +222,38 @@ export interface ReportingPortalConfig {
   updatedBy: string;
 }
 
+export interface TuStaffOperator {
+  gtkId: string;
+  nama: string;
+  nip: string;
+  jabatan: string;
+  fotoDataUrl?: string;
+  isActive: boolean;
+  updatedAt: string;
+}
+
+export interface TuStaffConfig {
+  isEnabled: boolean;
+  activeGtkId: string | null;
+  activeStaffName: string;
+  activeStaffNip: string;
+  activeStaffRole: string;
+  activeStaffPhoto: string;
+  deactivatedReason: string;
+  operators: TuStaffOperator[];
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export interface PublicTuStaffInfo {
+  isEnabled: boolean;
+  activeStaffName: string;
+  activeStaffRole: string;
+  activeStaffPhoto: string;
+  deactivatedReason: string;
+  updatedAt: string;
+}
+
 export type DukcapilMatchStatus = 'Padan Dispendukcapil' | 'Residu Data' | 'Tidak Padan NIK';
 
 export interface DapodikGtk {

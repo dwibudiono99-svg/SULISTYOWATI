@@ -1,4 +1,5 @@
 import {
+  ArrowRightLeft,
   BookOpenCheck,
   Database,
   FilePlus2,
@@ -9,13 +10,13 @@ import {
   LogOut,
   Printer,
   School,
+  ShieldAlert,
   ShieldCheck,
   ToggleLeft,
   Users,
   X,
 } from 'lucide-react';
-import { SCHOOL_INFO } from '../config/schoolConfig';
-import { ReportingPortalConfig, UserMode, WorkspaceTab } from '../types/tu';
+import { PublicTuStaffInfo, ReportingPortalConfig, UserMode, WorkspaceTab } from '../types/tu';
 
 interface SidebarProps {
   activeTab: WorkspaceTab;
@@ -25,6 +26,8 @@ interface SidebarProps {
   onLogoutPetugas: () => void;
   onOpenChangeToken: () => void;
   onOpenReportingControl: () => void;
+  onOpenTuStaffSettings: () => void;
+  tuStaff: PublicTuStaffInfo;
   reportingPortal: ReportingPortalConfig;
   canChangeToken: boolean;
   pendingCount: number;
@@ -68,6 +71,8 @@ export function Sidebar({
   onLogoutPetugas,
   onOpenChangeToken,
   onOpenReportingControl,
+  onOpenTuStaffSettings,
+  tuStaff,
   reportingPortal,
   canChangeToken,
   pendingCount,
@@ -251,22 +256,65 @@ export function Sidebar({
         {isPetugas ? (
           <div className="space-y-3">
             <div className="flex items-center gap-3">
-              <img
-                src={SCHOOL_INFO.staffAvatar}
-                alt={SCHOOL_INFO.staffName}
-                referrerPolicy="no-referrer"
-                className="h-9 w-9 shrink-0 rounded-lg object-cover bg-slate-800"
-              />
+              {tuStaff.isEnabled && tuStaff.activeStaffPhoto ? (
+                <img
+                  src={tuStaff.activeStaffPhoto}
+                  alt={tuStaff.activeStaffName}
+                  referrerPolicy="no-referrer"
+                  className="h-9 w-9 shrink-0 rounded-lg object-cover bg-slate-800"
+                />
+              ) : (
+                <div
+                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
+                    tuStaff.isEnabled ? 'bg-blue-700 text-white' : 'bg-rose-900 text-rose-200'
+                  }`}
+                >
+                  {tuStaff.isEnabled
+                    ? (tuStaff.activeStaffName || 'TU')
+                        .split(/\s+/)
+                        .slice(0, 2)
+                        .map((p) => p[0])
+                        .join('')
+                        .toUpperCase()
+                    : 'OFF'}
+                </div>
+              )}
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                  <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-400" aria-hidden="true" />
-                  <span className="truncate">{SCHOOL_INFO.staffName}</span>
+                  {tuStaff.isEnabled ? (
+                    <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-400" aria-hidden="true" />
+                  ) : (
+                    <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-rose-400" aria-hidden="true" />
+                  )}
+                  <span className="truncate">
+                    {tuStaff.isEnabled ? tuStaff.activeStaffName : 'Petugas TU Dinonaktifkan'}
+                  </span>
                 </div>
-                <p className="truncate text-xs text-slate-400">Sesi Petugas TU Aktif</p>
+                <p className="truncate text-xs text-slate-400">
+                  {tuStaff.isEnabled ? tuStaff.activeStaffRole : 'Penugasan Nonaktif'}
+                </p>
               </div>
             </div>
 
             <div className="flex flex-col gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  onCloseMobile();
+                  onOpenTuStaffSettings();
+                }}
+                className={`inline-flex w-full items-center justify-between rounded-lg border px-3 py-2 text-xs font-medium whitespace-nowrap ${
+                  tuStaff.isEnabled
+                    ? 'border-blue-700/60 bg-blue-950/50 text-blue-200 hover:bg-blue-950'
+                    : 'border-rose-700/60 bg-rose-950/60 text-rose-200 hover:bg-rose-950'
+                }`}
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <ArrowRightLeft className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span>{tuStaff.isEnabled ? 'Petugas TU: Aktif' : 'Petugas TU: Nonaktif'}</span>
+                </span>
+                <span className="text-[10px] underline">Alihkan</span>
+              </button>
               <button
                 type="button"
                 onClick={() => {

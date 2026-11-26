@@ -1,4 +1,4 @@
-import { KopSuratConfig, ReportingPortalConfig, ServiceCatalogItem } from '../types/tu';
+import { KopSuratConfig, ReportingPortalConfig, ServiceCatalogItem, TuStaffConfig } from '../types/tu';
 
 export const SCHOOL_INFO = {
   province: 'PEMERINTAH PROVINSI JAWA TIMUR',
@@ -44,6 +44,19 @@ export const DEFAULT_REPORTING_PORTAL_CONFIG: ReportingPortalConfig = {
     'Pelayanan pengajuan permohonan Tata Usaha secara daring sedang ditutup sementara (di luar jam kerja loket atau pemeliharaan berkas). Silakan pantau tiket berjalan atau ajukan kembali saat loket dibuka.',
   updatedAt: '2026-11-25T07:00:00+07:00',
   updatedBy: 'Sulistyowati, S.Pd.',
+};
+
+export const DEFAULT_TU_STAFF_CONFIG: TuStaffConfig = {
+  isEnabled: true,
+  activeGtkId: null,
+  activeStaffName: SCHOOL_INFO.staffName,
+  activeStaffNip: '',
+  activeStaffRole: SCHOOL_INFO.staffRole,
+  activeStaffPhoto: SCHOOL_INFO.staffAvatar,
+  deactivatedReason: '',
+  operators: [],
+  updatedAt: '2026-11-25T07:00:00+07:00',
+  updatedBy: SCHOOL_INFO.staffName,
 };
 
 export const TU_SERVICE_CATALOG: ServiceCatalogItem[] = [

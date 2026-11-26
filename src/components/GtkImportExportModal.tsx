@@ -24,7 +24,7 @@ interface GtkImportExportModalProps {
   initialTab?: 'import' | 'export';
   gtkList: DapodikGtk[];
   onClose: () => void;
-  onConfirmImport: (imported: DapodikGtk[], mode: ImportMergeMode) => void;
+  onConfirmImport: (imported: DapodikGtk[], mode: ImportMergeMode) => Promise<boolean | void> | void;
 }
 
 export function GtkImportExportModal({
@@ -38,6 +38,7 @@ export function GtkImportExportModal({
   const [mergeMode, setMergeMode] = useState<ImportMergeMode>('upsert');
   const [dragging, setDragging] = useState(false);
   const [parsing, setParsing] = useState(false);
+  const [savingImport, setSavingImport] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [fileName, setFileName] = useState('');
   const [parsedResult, setParsedResult] = useState<ParsedGtkImport | null>(null);
@@ -464,16 +465,32 @@ export function GtkImportExportModal({
             {activeTab === 'import' && parsedResult && (
               <button
                 type="button"
-                onClick={() => {
-                  onConfirmImport(parsedResult.gtkList, mergeMode);
-                  setParsedResult(null);
-                  setFileName('');
-                  onClose();
+                disabled={savingImport}
+                onClick={async () => {
+                  if (savingImport) return;
+                  setSavingImport(true);
+                  setErrorMsg('');
+                  try {
+                    const res = await onConfirmImport(parsedResult.gtkList, mergeMode);
+                    if (res !== false) {
+                      setParsedResult(null);
+                      setFileName('');
+                      onClose();
+                    } else {
+                      setErrorMsg('Gagal menyimpan ke repositori GTK. Silakan coba lagi.');
+                    }
+                  } finally {
+                    setSavingImport(false);
+                  }
                 }}
-                className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-800"
+                className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-800 disabled:bg-blue-400"
               >
                 <Upload className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>Impor {parsedResult.gtkList.length} GTK ke Database</span>
+                <span>
+                  {savingImport
+                    ? 'Menyimpan ke Repositori...'
+                    : `Impor ${parsedResult.gtkList.length} GTK ke Database`}
+                </span>
               </button>
             )}
           </div>

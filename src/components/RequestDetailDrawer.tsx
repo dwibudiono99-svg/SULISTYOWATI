@@ -11,10 +11,11 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { FormEvent, useEffect, useState } from 'react';
-import { SCHOOL_INFO, TU_SERVICE_CATALOG } from '../config/schoolConfig';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { TU_SERVICE_CATALOG } from '../config/schoolConfig';
 import {
   ApplicantRole,
+  DapodikGtk,
   RequestParticipant,
   RequestStatus,
   ServiceCategoryId,
@@ -22,6 +23,7 @@ import {
   UserMode,
 } from '../types/tu';
 import { formatTanggalIndonesia, generateOfficialLetterNumber } from '../utils/formatters';
+import { formatPtkDisplayName } from '../utils/gtkDapodikValidation';
 import { StatusIndicator } from './StatusIndicator';
 
 export interface EditRequestPayload {
@@ -40,6 +42,8 @@ export interface EditRequestPayload {
 interface RequestDetailDrawerProps {
   request: ServiceRequest | null;
   userMode: UserMode;
+  activeStaffName: string;
+  gtkList?: DapodikGtk[];
   totalLettersCount: number;
   initialEditMode?: boolean;
   onClose: () => void;
@@ -48,7 +52,8 @@ interface RequestDetailDrawerProps {
     newStatus: RequestStatus,
     letterNumber: string,
     staffNote: string,
-    addToAgenda: boolean
+    addToAgenda: boolean,
+    assignedStaff?: string
   ) => void;
   onEditRequest: (requestId: string, payload: EditRequestPayload) => Promise<boolean>;
   onDeleteRequest: (requestId: string) => Promise<boolean>;
@@ -74,6 +79,8 @@ function newParticipantId(): string {
 export function RequestDetailDrawer({
   request,
   userMode,
+  activeStaffName,
+  gtkList = [],
   totalLettersCount,
   initialEditMode = false,
   onClose,
@@ -85,6 +92,7 @@ export function RequestDetailDrawer({
   const [nextStatus, setNextStatus] = useState<RequestStatus>('Verifikasi Berkas');
   const [letterNumber, setLetterNumber] = useState('');
   const [staffNote, setStaffNote] = useState('');
+  const [assignedStaffInput, setAssignedStaffInput] = useState('');
   const [addToAgenda, setAddToAgenda] = useState(false);
 
   const [isEditing, setIsEditing] = useState(false);
@@ -109,6 +117,7 @@ export function RequestDetailDrawer({
       setNextStatus(request.status);
       setLetterNumber(request.letterNumber ?? '');
       setStaffNote('');
+      setAssignedStaffInput(request.assignedStaff || activeStaffName);
       setAddToAgenda(false);
 
       setEditServiceId(request.serviceId);
@@ -128,7 +137,22 @@ export function RequestDetailDrawer({
       setConfirmDeleteOpen(false);
       setIsEditing(userMode === 'petugas' && initialEditMode);
     }
-  }, [request, initialEditMode, userMode]);
+  }, [activeStaffName, request, initialEditMode, userMode]);
+
+  const staffCandidateNames = useMemo(() => {
+    const names = new Set<string>();
+    if (activeStaffName && activeStaffName !== 'Petugas TU (Nonaktif)') {
+      names.add(activeStaffName);
+    }
+    if (request?.assignedStaff) {
+      names.add(request.assignedStaff);
+    }
+    for (const g of gtkList) {
+      const display = formatPtkDisplayName(g);
+      if (display) names.add(display);
+    }
+    return Array.from(names);
+  }, [activeStaffName, gtkList, request?.assignedStaff]);
 
   if (!request) return null;
 
@@ -139,7 +163,14 @@ export function RequestDetailDrawer({
 
   const handleStaffUpdate = (e: FormEvent) => {
     e.preventDefault();
-    onUpdateStatus(request.id, nextStatus, letterNumber.trim(), staffNote.trim(), addToAgenda);
+    onUpdateStatus(
+      request.id,
+      nextStatus,
+      letterNumber.trim(),
+      staffNote.trim(),
+      addToAgenda,
+      assignedStaffInput.trim() || undefined
+    );
     setStaffNote('');
   };
 
@@ -793,7 +824,7 @@ export function RequestDetailDrawer({
             >
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold text-slate-900">
-                  Tindak Lanjut Petugas TU ({SCHOOL_INFO.staffName})
+                  Tindak Lanjut Petugas TU ({activeStaffName})
                 </h3>
               </div>
 
@@ -840,6 +871,29 @@ export function RequestDetailDrawer({
                     </button>
                   </div>
                 </div>
+
+                {staffCandidateNames.length > 0 && (
+                  <div className="sm:col-span-2">
+                    <label htmlFor="staff-assignee" className="block text-xs font-medium text-slate-700">
+                      Petugas TU Penanggung Jawab Tiket (Dapat Dialihkan)
+                    </label>
+                    <select
+                      id="staff-assignee"
+                      value={assignedStaffInput}
+                      onChange={(e) => setAssignedStaffInput(e.target.value)}
+                      className="mt-1 h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+                    >
+                      {staffCandidateNames.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                      <option value="Menunggu Penugasan (Petugas TU Nonaktif)">
+                        Menunggu Penugasan (Petugas TU Nonaktif)
+                      </option>
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div>

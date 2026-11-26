@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  ArrowRightLeft,
   Camera,
   CheckCircle2,
   Download,
@@ -28,9 +29,10 @@ interface GtkDatabaseViewProps {
   gtkList: DapodikGtk[];
   onSaveGtk: (gtk: DapodikGtk, isNew: boolean) => void;
   onDeleteGtk: (id: string) => void;
-  onImportGtk: (imported: DapodikGtk[], mode: ImportMergeMode) => void;
+  onImportGtk: (imported: DapodikGtk[], mode: ImportMergeMode) => Promise<boolean | void> | void;
   onBatchPadanDispendukcapil: () => Promise<void>;
   onCreateLetterFromGtk: (gtk: DapodikGtk) => void;
+  onOpenTuStaffSettings?: () => void;
 }
 
 type KepegawaianFilter = 'ALL' | 'PNS' | 'PPPK' | 'PPPK Paruh Waktu' | 'NON-ASN';
@@ -53,6 +55,7 @@ export function GtkDatabaseView({
   onImportGtk,
   onBatchPadanDispendukcapil,
   onCreateLetterFromGtk,
+  onOpenTuStaffSettings,
 }: GtkDatabaseViewProps) {
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [searchQuery, setSearchQuery] = useState('');
@@ -238,6 +241,16 @@ export function GtkDatabaseView({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {onOpenTuStaffSettings && (
+              <button
+                type="button"
+                onClick={onOpenTuStaffSettings}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 hover:bg-slate-50 whitespace-nowrap"
+              >
+                <ArrowRightLeft className="h-3.5 w-3.5 text-blue-700" aria-hidden="true" />
+                <span>Setting Petugas TU</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => void handleBatchCheck()}

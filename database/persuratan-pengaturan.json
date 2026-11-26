@@ -1,0 +1,33 @@
+{
+  "repository": "persuratan-pengaturan",
+  "label": "Database Repositori Pengaturan Kop Surat & Portal Layanan TU",
+  "schemaVersion": 1,
+  "updatedAt": "2026-11-26T09:46:17.539Z",
+  "totalRecords": 1,
+  "data": {
+    "kopSurat": {
+      "showKopSurat": true,
+      "mode": "custom",
+      "bannerImageDataUrl": "",
+      "leftLogoDataUrl": "/assets/logo-jatim-sman9.png",
+      "rightLogoDataUrl": "",
+      "provinceLine": "PEMERINTAH PROVINSI JAWA TIMUR",
+      "departmentLine": "DINAS PENDIDIKAN",
+      "schoolNameLine": "SMA NEGERI 9 SURABAYA",
+      "addressLine": "Jalan Wijayakusuma Nomor 48, Ketabang, Genteng, Surabaya, Jawa Timur 60272",
+      "contactLine": "Telepon (031) 5342608 - Faksimili (031) 5477817",
+      "websiteLine": "Laman : sman9sby.sch.id  Surel : smanixsurabaya@gmail.com, NPSN : 20532263",
+      "dividerStyle": "thick-thin",
+      "cityName": "Surabaya",
+      "principalTitle": "Kepala Sekolah,",
+      "principalName": "TRI KURNIAWATI, S.Pd., M.M., M.Pd.",
+      "principalNip": "197203251997032003"
+    },
+    "reportingPortal": {
+      "isOpen": false,
+      "closedMessage": "Pelayanan pengajuan permohonan Tata Usaha secara daring sedang ditutup sementara (di luar jam kerja loket atau pemeliharaan berkas). Silakan pantau tiket berjalan atau ajukan kembali saat loket dibuka.",
+      "updatedAt": "2026-11-26T09:42:46.813Z",
+      "updatedBy": "Sulistyowati, S.Pd."
+    }
+  }
+}

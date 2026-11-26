@@ -1,19 +1,43 @@
 import 'dotenv/config';
 import crypto from 'node:crypto';
-import fs from 'node:fs';
 import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
+import {
+  ClaimedTokenRecord,
+  DEFAULT_KOP_SURAT,
+  DEFAULT_REPORTING_PORTAL,
+  DEFAULT_TU_STAFF,
+  ensureRepositoriesInitialized,
+  getRepositoryStatuses,
+  isSafeRasterImageDataUrl,
+  readAgendaRepository,
+  readClaimedToken,
+  readGtkRepository,
+  readRequestsRepository,
+  readRombelsRepository,
+  readSettingsRepository,
+  readStudentsRepository,
+  sanitizeKopSurat,
+  sanitizeReportingPortal,
+  sanitizeTuStaffConfig,
+  toPublicTuStaffInfo,
+  writeAgendaRepository,
+  writeClaimedToken,
+  writeGtkRepository,
+  writeRequestsRepository,
+  writeRombelsRepository,
+  writeSettingsRepository,
+  writeStudentsRepository,
+} from './server/repositoryStore.ts';
 import type {
   AgendaEntry,
   DapodikGtk,
   DapodikRombel,
   DapodikStudent,
-  KopDividerStyle,
-  KopSuratConfig,
-  KopSuratMode,
   ReportingPortalConfig,
   RequestParticipant,
   ServiceRequest,
+  TuStaffConfig,
 } from './src/types/tu.ts';
 import { applyDispendukcapilCheck, formatPtkDisplayName } from './src/utils/gtkDapodikValidation.ts';
 import { normalizeRombelRecord, sortRombelsNaturally } from './src/utils/rombelDapodikUtils.ts';
@@ -21,52 +45,6 @@ import { normalizeRombelRecord, sortRombelsNaturally } from './src/utils/rombelD
 const PORT = 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-const STORE_PATH = path.resolve(DATA_DIR, 'tu_store.json');
-
-const DEFAULT_KOP_SURAT: KopSuratConfig = {
-  showKopSurat: true,
-  mode: 'custom',
-  bannerImageDataUrl: '',
-  leftLogoDataUrl: '/assets/logo-jatim-sman9.png',
-  rightLogoDataUrl: '',
-  provinceLine: 'PEMERINTAH PROVINSI JAWA TIMUR',
-  departmentLine: 'DINAS PENDIDIKAN',
-  schoolNameLine: 'SMA NEGERI 9 SURABAYA',
-  addressLine: 'Jalan Wijayakusuma Nomor 48, Ketabang, Genteng, Surabaya, Jawa Timur 60272',
-  contactLine: 'Telepon (031) 5342608 - Faksimili (031) 5477817',
-  websiteLine: 'Laman : sman9sby.sch.id  Surel : smanixsurabaya@gmail.com, NPSN : 20532263',
-  dividerStyle: 'thick-thin',
-  cityName: 'Surabaya',
-  principalTitle: 'Kepala Sekolah,',
-  principalName: 'TRI KURNIAWATI, S.Pd., M.M., M.Pd.',
-  principalNip: '197203251997032003',
-};
-
-const DEFAULT_REPORTING_PORTAL: ReportingPortalConfig = {
-  isOpen: true,
-  closedMessage:
-    'Pelayanan pengajuan permohonan Tata Usaha secara daring sedang ditutup sementara (di luar jam kerja loket atau pemeliharaan berkas). Silakan pantau tiket berjalan atau ajukan kembali saat loket dibuka.',
-  updatedAt: '2026-11-25T07:00:00+07:00',
-  updatedBy: 'Sulistyowati, S.Pd.',
-};
-
-interface ClaimedTokenRecord {
-  salt: string;
-  hash: string;
-  claimedAt: string;
-}
-
-interface ServerStore {
-  claimedToken: ClaimedTokenRecord | null;
-  kopSurat: KopSuratConfig;
-  reportingPortal: ReportingPortalConfig;
-  students: DapodikStudent[];
-  gtkList: DapodikGtk[];
-  rombels: DapodikRombel[];
-  requests: ServiceRequest[];
-  agenda: AgendaEntry[];
-}
 
 interface SessionPayload {
   jti: string;
@@ -76,227 +54,6 @@ interface SessionPayload {
 }
 
 const revokedSessionIds = new Set<string>();
-
-const LEGACY_DUMMY_STUDENT_IDS = new Set([
-  'pd-001',
-  'pd-002',
-  'pd-003',
-  'pd-004',
-  'pd-005',
-  'pd-006',
-  'pd-007',
-  'pd-imp-1795640655987-8',
-  'pd-imp-1795640655986-7',
-  'pd-imp-1795640655986-6',
-]);
-const LEGACY_DUMMY_STUDENT_NISNS = new Set(['0081234567', '0081923412', '0072819231']);
-function isLegacyDummyStudent(s: Partial<DapodikStudent> | null | undefined): boolean {
-  if (!s) return true;
-  if (typeof s.id === 'string' && LEGACY_DUMMY_STUDENT_IDS.has(s.id)) return true;
-  if (typeof s.nisn === 'string' && LEGACY_DUMMY_STUDENT_NISNS.has(s.nisn.trim())) return true;
-  return false;
-}
-const LEGACY_DUMMY_REQUEST_IDS = new Set([
-  'TU-2026-0148',
-  'TU-2026-0149',
-  'TU-2026-0150',
-  'TU-2026-0151',
-  'TU-2026-0152',
-  'TU-2026-0141',
-]);
-const LEGACY_DUMMY_AGENDA_IDS = new Set(['ag-1', 'ag-2', 'ag-3', 'ag-4', 'ag-5']);
-
-function loadInitialSeeds(): Pick<ServerStore, 'students' | 'requests' | 'agenda'> {
-  return {
-    students: [],
-    requests: [],
-    agenda: [],
-  };
-}
-
-function loadInitialGtkSeeds(): DapodikGtk[] {
-  return [];
-}
-
-const BUILTIN_KOP_ASSETS = new Set([
-  '/assets/logo-jatim-sman9.png',
-  '/assets/aistudio/image_53f155ea.png',
-]);
-
-function isSafeRasterImageDataUrl(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  if (value === '' || BUILTIN_KOP_ASSETS.has(value)) return true;
-  if (value.length > 2_800_000) return false;
-  return /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value);
-}
-
-function sanitizeKopSurat(
-  input: unknown,
-  fallback: KopSuratConfig = DEFAULT_KOP_SURAT
-): { config: KopSuratConfig; error?: string } {
-  if (!input || typeof input !== 'object') {
-    return { config: fallback, error: 'Payload konfigurasi Kop Surat tidak valid.' };
-  }
-  const raw = input as Partial<KopSuratConfig>;
-  const mode: KopSuratMode = raw.mode === 'upload-banner' ? 'upload-banner' : 'custom';
-  const dividerStyle: KopDividerStyle =
-    raw.dividerStyle === 'thick-thin' || raw.dividerStyle === 'single'
-      ? raw.dividerStyle
-      : 'double';
-
-  const bannerImageDataUrl =
-    typeof raw.bannerImageDataUrl === 'string' ? raw.bannerImageDataUrl : '';
-  const leftLogoDataUrl =
-    typeof raw.leftLogoDataUrl === 'string' ? raw.leftLogoDataUrl : '';
-  const rightLogoDataUrl =
-    typeof raw.rightLogoDataUrl === 'string' ? raw.rightLogoDataUrl : '';
-
-  if (
-    !isSafeRasterImageDataUrl(bannerImageDataUrl) ||
-    !isSafeRasterImageDataUrl(leftLogoDataUrl) ||
-    !isSafeRasterImageDataUrl(rightLogoDataUrl)
-  ) {
-    return {
-      config: fallback,
-      error: 'Format gambar tidak didukung atau melebihi 2 MB. Gunakan file PNG, JPG, atau WEBP.',
-    };
-  }
-
-  if (mode === 'upload-banner' && !bannerImageDataUrl) {
-    return {
-      config: fallback,
-      error: 'Silakan unggah berkas gambar Kop Surat terlebih dahulu untuk mode Upload Berkas.',
-    };
-  }
-
-  const cleanText = (val: unknown, defaultVal: string, maxLen = 200): string => {
-    if (typeof val !== 'string') return defaultVal;
-    return val.trim().slice(0, maxLen);
-  };
-
-  return {
-    config: {
-      showKopSurat: raw.showKopSurat !== false,
-      mode,
-      bannerImageDataUrl,
-      leftLogoDataUrl,
-      rightLogoDataUrl,
-      provinceLine: cleanText(raw.provinceLine, fallback.provinceLine, 120),
-      departmentLine: cleanText(raw.departmentLine, fallback.departmentLine, 120),
-      schoolNameLine: cleanText(raw.schoolNameLine, fallback.schoolNameLine, 120),
-      addressLine: cleanText(raw.addressLine, fallback.addressLine, 220),
-      contactLine: cleanText(raw.contactLine, fallback.contactLine, 220),
-      websiteLine: cleanText(raw.websiteLine, fallback.websiteLine, 220),
-      dividerStyle,
-      cityName: cleanText(raw.cityName, fallback.cityName, 80) || 'Surabaya',
-      principalTitle: cleanText(raw.principalTitle, fallback.principalTitle, 100) || 'Kepala Sekolah,',
-      principalName: cleanText(raw.principalName, fallback.principalName, 120) || fallback.principalName,
-      principalNip: cleanText(raw.principalNip, fallback.principalNip, 40),
-    },
-  };
-}
-
-function sanitizeReportingPortal(
-  input: unknown,
-  fallback: ReportingPortalConfig = DEFAULT_REPORTING_PORTAL
-): ReportingPortalConfig {
-  if (!input || typeof input !== 'object') return fallback;
-  const raw = input as Partial<ReportingPortalConfig>;
-  return {
-    isOpen: raw.isOpen !== false,
-    closedMessage:
-      typeof raw.closedMessage === 'string' && raw.closedMessage.trim()
-        ? raw.closedMessage.trim().slice(0, 500)
-        : fallback.closedMessage,
-    updatedAt:
-      typeof raw.updatedAt === 'string' && raw.updatedAt
-        ? raw.updatedAt
-        : new Date().toISOString(),
-    updatedBy:
-      typeof raw.updatedBy === 'string' && raw.updatedBy
-        ? raw.updatedBy.trim().slice(0, 120)
-        : fallback.updatedBy,
-  };
-}
-
-function loadInitialRombelSeeds(_gtkList: DapodikGtk[]): DapodikRombel[] {
-  return [];
-}
-
-function readStore(): ServerStore {
-  if (!fs.existsSync(STORE_PATH)) {
-    const seeds = loadInitialSeeds();
-    const gtkList = loadInitialGtkSeeds();
-    const initial: ServerStore = {
-      claimedToken: null,
-      kopSurat: DEFAULT_KOP_SURAT,
-      reportingPortal: DEFAULT_REPORTING_PORTAL,
-      students: seeds.students,
-      gtkList,
-      rombels: loadInitialRombelSeeds(gtkList),
-      requests: seeds.requests,
-      agenda: seeds.agenda,
-    };
-    writeStore(initial);
-    return initial;
-  }
-  try {
-    const raw = fs.readFileSync(STORE_PATH, 'utf8');
-    const parsed = JSON.parse(raw) as Partial<ServerStore>;
-    const seeds = loadInitialSeeds();
-    const kopResult = parsed.kopSurat
-      ? sanitizeKopSurat(parsed.kopSurat, DEFAULT_KOP_SURAT)
-      : { config: DEFAULT_KOP_SURAT };
-    const reportingPortal = parsed.reportingPortal
-      ? sanitizeReportingPortal(parsed.reportingPortal, DEFAULT_REPORTING_PORTAL)
-      : DEFAULT_REPORTING_PORTAL;
-    const gtkList = Array.isArray(parsed.gtkList)
-      ? parsed.gtkList.map(applyDispendukcapilCheck)
-      : loadInitialGtkSeeds();
-    const rombels = Array.isArray(parsed.rombels)
-      ? sortRombelsNaturally(parsed.rombels.map((r) => normalizeRombelRecord(r, gtkList)))
-      : loadInitialRombelSeeds(gtkList);
-    const students = Array.isArray(parsed.students)
-      ? parsed.students.filter((s) => !isLegacyDummyStudent(s))
-      : seeds.students;
-    const requests = Array.isArray(parsed.requests)
-      ? parsed.requests.filter((r) => r && !LEGACY_DUMMY_REQUEST_IDS.has(r.id))
-      : seeds.requests;
-    const agenda = Array.isArray(parsed.agenda)
-      ? parsed.agenda.filter((a) => a && !LEGACY_DUMMY_AGENDA_IDS.has(a.id))
-      : seeds.agenda;
-    return {
-      claimedToken: parsed.claimedToken ?? null,
-      kopSurat: kopResult.config,
-      reportingPortal,
-      students,
-      gtkList,
-      rombels,
-      requests,
-      agenda,
-    };
-  } catch {
-    const seeds = loadInitialSeeds();
-    const gtkList = loadInitialGtkSeeds();
-    return {
-      claimedToken: null,
-      kopSurat: DEFAULT_KOP_SURAT,
-      reportingPortal: DEFAULT_REPORTING_PORTAL,
-      students: seeds.students,
-      gtkList,
-      rombels: loadInitialRombelSeeds(gtkList),
-      requests: seeds.requests,
-      agenda: seeds.agenda,
-    };
-  }
-}
-
-function writeStore(store: ServerStore): void {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const tmpPath = `${STORE_PATH}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify(store, null, 2), 'utf8');
-  fs.renameSync(tmpPath, STORE_PATH);
-}
 
 function hashTokenScrypt(token: string, salt?: string): { salt: string; hash: string } {
   const usedSalt = salt || crypto.randomBytes(16).toString('hex');
@@ -318,11 +75,19 @@ function verifyEnvToken(inputToken: string, envToken: string): boolean {
   return crypto.timingSafeEqual(digestA, digestB);
 }
 
-function signSessionToken(): string {
+function resolveActiveStaffName(tuStaff?: TuStaffConfig): string {
+  const cfg = tuStaff ?? readSettingsRepository().tuStaff;
+  if (!cfg.isEnabled) {
+    return 'Petugas TU (Nonaktif)';
+  }
+  return cfg.activeStaffName || 'Petugas Tata Usaha';
+}
+
+function signSessionToken(staffNameOverride?: string): string {
   const payload: SessionPayload = {
     jti: crypto.randomUUID(),
     role: 'petugas',
-    staffName: 'Sulistyowati, S.Pd.',
+    staffName: staffNameOverride || resolveActiveStaffName(),
     exp: Date.now() + SESSION_TTL_MS,
   };
   const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
@@ -415,15 +180,17 @@ function requirePetugasAuth(req: Request, res: Response, next: NextFunction): vo
 }
 
 async function startServer() {
+  ensureRepositoriesInitialized();
+
   const app = express();
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({ limit: '50mb' }));
 
   // Auth status
   app.get('/api/tu-auth/status', (req: Request, res: Response) => {
-    const store = readStore();
+    const claimedToken = readClaimedToken();
     const envToken = (process.env.TU_ACCESS_TOKEN || '').trim();
     const hasEnvToken = envToken.length > 0;
-    const hasClaimedToken = store.claimedToken !== null;
+    const hasClaimedToken = claimedToken !== null;
     const session = verifySessionToken(req.headers.authorization);
 
     res.json({
@@ -431,16 +198,16 @@ async function startServer() {
       hasEnvToken,
       hasClaimedToken,
       authenticated: session !== null,
-      staffName: session?.staffName ?? null,
+      staffName: session ? resolveActiveStaffName() : null,
     });
   });
 
-  // First-run token claim (only when env token is unset and no claimed token exists)
+  // First-run token claim
   app.post('/api/tu-auth/claim', (req: Request, res: Response) => {
     const envToken = (process.env.TU_ACCESS_TOKEN || '').trim();
-    const store = readStore();
+    const existingClaimed = readClaimedToken();
 
-    if (envToken.length > 0 || store.claimedToken !== null) {
+    if (envToken.length > 0 || existingClaimed !== null) {
       res.status(409).json({
         error: 'Token Petugas TU sudah ditetapkan sebelumnya. Gunakan formulir verifikasi token.',
       });
@@ -456,17 +223,17 @@ async function startServer() {
     }
 
     const hashed = hashTokenScrypt(token);
-    store.claimedToken = {
+    writeClaimedToken({
       salt: hashed.salt,
       hash: hashed.hash,
       claimedAt: new Date().toISOString(),
-    };
-    writeStore(store);
+    });
 
-    const sessionToken = signSessionToken();
+    const activeName = resolveActiveStaffName();
+    const sessionToken = signSessionToken(activeName);
     res.status(201).json({
       sessionToken,
-      staffName: 'Sulistyowati, S.Pd.',
+      staffName: activeName,
     });
   });
 
@@ -479,15 +246,15 @@ async function startServer() {
     }
 
     const envToken = (process.env.TU_ACCESS_TOKEN || '').trim();
-    const store = readStore();
+    const claimedToken = readClaimedToken();
 
     if (envToken.length > 0) {
       if (!verifyEnvToken(token, envToken)) {
         res.status(401).json({ error: 'Token masuk Petugas TU tidak sesuai.' });
         return;
       }
-    } else if (store.claimedToken) {
-      if (!verifyClaimedToken(token, store.claimedToken)) {
+    } else if (claimedToken) {
+      if (!verifyClaimedToken(token, claimedToken)) {
         res.status(401).json({ error: 'Token masuk Petugas TU tidak sesuai.' });
         return;
       }
@@ -498,14 +265,15 @@ async function startServer() {
       return;
     }
 
-    const sessionToken = signSessionToken();
+    const activeName = resolveActiveStaffName();
+    const sessionToken = signSessionToken(activeName);
     res.json({
       sessionToken,
-      staffName: 'Sulistyowati, S.Pd.',
+      staffName: activeName,
     });
   });
 
-  // Change token (only when authenticated and not overridden by env var)
+  // Change token
   app.post('/api/tu-auth/change-token', requirePetugasAuth, (req: Request, res: Response) => {
     const envToken = (process.env.TU_ACCESS_TOKEN || '').trim();
     if (envToken.length > 0) {
@@ -524,19 +292,18 @@ async function startServer() {
       return;
     }
 
-    const store = readStore();
-    if (store.claimedToken && !verifyClaimedToken(currentToken, store.claimedToken)) {
+    const claimedToken = readClaimedToken();
+    if (claimedToken && !verifyClaimedToken(currentToken, claimedToken)) {
       res.status(401).json({ error: 'Token lama tidak sesuai.' });
       return;
     }
 
     const hashed = hashTokenScrypt(newToken);
-    store.claimedToken = {
+    writeClaimedToken({
       salt: hashed.salt,
       hash: hashed.hash,
       claimedAt: new Date().toISOString(),
-    };
-    writeStore(store);
+    });
 
     res.json({ ok: true });
   });
@@ -549,7 +316,14 @@ async function startServer() {
     res.json({ ok: true });
   });
 
-  // Controlled Public Dapodik Lookup (returns non-sensitive letter-form fields only; never NIK/KK/NPWP/Ibu)
+  // Repository status summary (Protected Petugas TU)
+  app.get('/api/repositories/status', requirePetugasAuth, (_req: Request, res: Response) => {
+    res.json({
+      repositories: getRepositoryStatuses(),
+    });
+  });
+
+  // Controlled Public Dapodik Lookup
   app.get('/api/dapodik/lookup-student', (req: Request, res: Response) => {
     const rawQ = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     const digitsOnly = rawQ.replace(/\D/g, '');
@@ -559,8 +333,8 @@ async function startServer() {
       return;
     }
 
-    const store = readStore();
-    const matched = store.students.find((s) => {
+    const students = readStudentsRepository();
+    const matched = students.find((s) => {
       const nisn = String(s.nisn ?? '').trim();
       const nipd = String(s.nipd ?? '').trim();
       if (digitsOnly.length >= 4) {
@@ -605,7 +379,7 @@ async function startServer() {
 
     const digitsOnly = rawQ.replace(/\D/g, '');
     const normalizedQ = rawQ.replace(/\s+/g, ' ').toLowerCase();
-    const store = readStore();
+    const gtkList = readGtkRepository();
 
     const toPublicGtk = (g: DapodikGtk) => ({
       id: g.id,
@@ -624,7 +398,7 @@ async function startServer() {
       fotoDataUrl: g.fotoDataUrl ?? '',
     });
 
-    const exactMatch = store.gtkList.find((g) => {
+    const exactMatch = gtkList.find((g) => {
       const nipDigits = String(g.nip ?? '').replace(/\D/g, '');
       const nuptkDigits = String(g.nuptk ?? '').replace(/\D/g, '');
       const bareName = String(g.nama ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
@@ -642,7 +416,7 @@ async function startServer() {
       return;
     }
 
-    const candidates = store.gtkList
+    const candidates = gtkList
       .filter((g) => {
         const nipDigits = String(g.nip ?? '').replace(/\D/g, '');
         const nuptkDigits = String(g.nuptk ?? '').replace(/\D/g, '');
@@ -664,10 +438,10 @@ async function startServer() {
     });
   });
 
-  // Public Pemohon Routes (masked PII, no student database access)
+  // Public Pemohon Routes
   app.get('/api/requests/public', (_req: Request, res: Response) => {
-    const store = readStore();
-    res.json(store.requests.map(toPublicRequest));
+    const requests = readRequestsRepository();
+    res.json(requests.map(toPublicRequest));
   });
 
   app.get('/api/requests/track', (req: Request, res: Response) => {
@@ -677,8 +451,8 @@ async function startServer() {
       res.status(400).json({ error: 'Parameter pencarian wajib diisi.' });
       return;
     }
-    const store = readStore();
-    const matches = store.requests
+    const requests = readRequestsRepository();
+    const matches = requests
       .filter((item) => {
         if (item.id.toLowerCase() === q) return true;
         const idNorm = item.identityNumber.trim().toLowerCase();
@@ -702,12 +476,12 @@ async function startServer() {
 
   app.post('/api/requests', (req: Request, res: Response) => {
     try {
-      const store = readStore();
+      const settings = readSettingsRepository();
       const petugasSession = verifySessionToken(req.headers.authorization);
-      if (!store.reportingPortal.isOpen && !petugasSession) {
+      if (!settings.reportingPortal.isOpen && !petugasSession) {
         res.status(403).json({
           error:
-            store.reportingPortal.closedMessage ||
+            settings.reportingPortal.closedMessage ||
             'Pelayanan pelaporan/permohonan daring sedang ditutup sementara.',
         });
         return;
@@ -732,8 +506,9 @@ async function startServer() {
         return;
       }
 
+      const requests = readRequestsRepository();
       const nowIso = new Date().toISOString();
-      const maxSeq = store.requests.reduce((max, item) => {
+      const maxSeq = requests.reduce((max, item) => {
         const match = /^TU-\d{4}-(\d+)$/i.exec(String(item.id || '').trim());
         const num = match ? Number(match[1]) : 0;
         return Number.isFinite(num) && num > max ? num : max;
@@ -759,7 +534,9 @@ async function startServer() {
           ? body.submittedRequirements.filter((x): x is string => typeof x === 'string')
           : [],
         status: 'Diajukan',
-        assignedStaff: 'Sulistyowati, S.Pd.',
+        assignedStaff: settings.tuStaff.isEnabled
+          ? settings.tuStaff.activeStaffName || 'Petugas Tata Usaha'
+          : 'Menunggu Penugasan (Petugas TU Nonaktif)',
         createdAt: nowIso,
         updatedAt: nowIso,
         estimatedReadyAt:
@@ -779,31 +556,31 @@ async function startServer() {
         ],
       };
 
-      store.requests.unshift(newReq);
-      writeStore(store);
+      requests.unshift(newReq);
+      writeRequestsRepository(requests);
 
       res.status(201).json(petugasSession ? newReq : toPublicRequest(newReq));
     } catch (err) {
       console.error('Failed to persist service request:', err);
       res.status(500).json({
-        error: 'Terjadi kesalahan saat menyimpan permohonan ke sistem Tata Usaha. Silakan coba lagi.',
+        error: 'Terjadi kesalahan saat menyimpan permohonan ke repositori Tata Usaha. Silakan coba lagi.',
       });
     }
   });
 
-  // Protected Petugas TU Routes
+  // Protected Petugas TU Persuratan Routes
   app.get('/api/requests', requirePetugasAuth, (_req: Request, res: Response) => {
-    const store = readStore();
-    res.json(store.requests);
+    res.json(readRequestsRepository());
   });
 
   app.patch('/api/requests/:id', requirePetugasAuth, (req: Request, res: Response) => {
     const { id } = req.params;
-    const { newStatus, letterNumber, staffNote, addToAgenda } = req.body as {
+    const { newStatus, letterNumber, staffNote, addToAgenda, assignedStaff } = req.body as {
       newStatus?: ServiceRequest['status'];
       letterNumber?: string;
       staffNote?: string;
       addToAgenda?: boolean;
+      assignedStaff?: string;
     };
 
     if (!newStatus) {
@@ -811,15 +588,16 @@ async function startServer() {
       return;
     }
 
-    const store = readStore();
-    const targetIdx = store.requests.findIndex((r) => r.id === id);
+    const requests = readRequestsRepository();
+    const targetIdx = requests.findIndex((r) => r.id === id);
     if (targetIdx < 0) {
       res.status(404).json({ error: 'Tiket permohonan tidak ditemukan.' });
       return;
     }
 
     const nowIso = new Date().toISOString();
-    const existing = store.requests[targetIdx];
+    const existing = requests[targetIdx];
+    const activeActor = resolveActiveStaffName();
     const noteText =
       (typeof staffNote === 'string' && staffNote.trim()) ||
       `Status permohonan diperbarui menjadi "${newStatus}" oleh Petugas Tata Usaha.`;
@@ -827,6 +605,10 @@ async function startServer() {
     const updated: ServiceRequest = {
       ...existing,
       status: newStatus,
+      assignedStaff:
+        typeof assignedStaff === 'string' && assignedStaff.trim()
+          ? assignedStaff.trim().slice(0, 160)
+          : existing.assignedStaff,
       letterNumber:
         typeof letterNumber === 'string' && letterNumber.trim()
           ? letterNumber.trim()
@@ -839,17 +621,19 @@ async function startServer() {
           id: `tl-${Date.now()}`,
           timestamp: nowIso,
           status: newStatus,
-          actor: 'Sulistyowati, S.Pd.',
+          actor: activeActor,
           note: noteText,
         },
       ],
     };
 
-    store.requests[targetIdx] = updated;
+    requests[targetIdx] = updated;
+    writeRequestsRepository(requests);
 
     let createdAgenda: AgendaEntry | null = null;
     if (addToAgenda) {
-      const outCount = store.agenda.filter((e) => e.type === 'Surat Keluar').length + 221;
+      const agenda = readAgendaRepository();
+      const outCount = agenda.filter((e) => e.type === 'Surat Keluar').length + 221;
       createdAgenda = {
         id: `ag-${Date.now()}`,
         type: 'Surat Keluar',
@@ -867,10 +651,10 @@ async function startServer() {
         disposition: 'Tercatat otomatis dari pelayanan tiket SIP TU.',
         relatedTicketId: updated.id,
       };
-      store.agenda.unshift(createdAgenda);
+      agenda.unshift(createdAgenda);
+      writeAgendaRepository(agenda);
     }
 
-    writeStore(store);
     res.json({ request: updated, createdAgenda });
   });
 
@@ -889,14 +673,14 @@ async function startServer() {
       return;
     }
 
-    const store = readStore();
-    const idx = store.requests.findIndex((r) => r.id === id);
+    const requests = readRequestsRepository();
+    const idx = requests.findIndex((r) => r.id === id);
     if (idx < 0) {
       res.status(404).json({ error: 'Tiket permohonan tidak ditemukan.' });
       return;
     }
 
-    const existing = store.requests[idx];
+    const existing = requests[idx];
     const nowIso = new Date().toISOString();
     const participants = sanitizeParticipants(body.participants);
 
@@ -920,6 +704,10 @@ async function startServer() {
           : existing.phone,
       purpose: body.purpose.trim(),
       notes: typeof body.notes === 'string' ? body.notes.trim() : existing.notes,
+      assignedStaff:
+        typeof body.assignedStaff === 'string' && body.assignedStaff.trim()
+          ? body.assignedStaff.trim().slice(0, 160)
+          : existing.assignedStaff,
       participants,
       updatedAt: nowIso,
       timeline: [
@@ -928,34 +716,33 @@ async function startServer() {
           id: `tl-${Date.now()}`,
           timestamp: nowIso,
           status: existing.status,
-          actor: (res.locals.petugas as SessionPayload | undefined)?.staffName || 'Sulistyowati, S.Pd.',
+          actor: resolveActiveStaffName(),
           note: 'Data ajuan permohonan disunting oleh Petugas Tata Usaha.',
         },
       ],
     };
 
-    store.requests[idx] = updated;
-    writeStore(store);
-    res.json({ request: updated });
+    requests[idx] = updated;
+    writeRequestsRepository(requests);
+    res.json(updated);
   });
 
   app.delete('/api/requests/:id', requirePetugasAuth, (req: Request, res: Response) => {
     const { id } = req.params;
-    const store = readStore();
-    const exists = store.requests.some((r) => r.id === id);
+    const requests = readRequestsRepository();
+    const exists = requests.some((r) => r.id === id);
     if (!exists) {
       res.status(404).json({ error: 'Tiket permohonan tidak ditemukan.' });
       return;
     }
-    store.requests = store.requests.filter((r) => r.id !== id);
-    writeStore(store);
+    const nextRequests = requests.filter((r) => r.id !== id);
+    writeRequestsRepository(nextRequests);
     res.json({ ok: true, id });
   });
 
-  // Protected Dapodik Student Database Routes
+  // Protected Dapodik Student Database Repository Routes
   app.get('/api/students', requirePetugasAuth, (_req: Request, res: Response) => {
-    const store = readStore();
-    res.json(store.students);
+    res.json(readStudentsRepository());
   });
 
   app.post('/api/students', requirePetugasAuth, (req: Request, res: Response) => {
@@ -965,22 +752,22 @@ async function startServer() {
       return;
     }
 
-    const store = readStore();
+    const students = readStudentsRepository();
     const record: DapodikStudent = {
       ...student,
-      id: `pd-${Date.now()}`,
+      id: student.id?.trim() || `pd-${Date.now()}`,
       vervalPdSyncAt: new Date().toISOString(),
     };
-    store.students.unshift(record);
-    writeStore(store);
+    students.unshift(record);
+    writeStudentsRepository(students);
     res.status(201).json(record);
   });
 
   app.put('/api/students/:id', requirePetugasAuth, (req: Request, res: Response) => {
     const { id } = req.params;
     const incoming = req.body as DapodikStudent;
-    const store = readStore();
-    const idx = store.students.findIndex((s) => s.id === id);
+    const students = readStudentsRepository();
+    const idx = students.findIndex((s) => s.id === id);
     if (idx < 0) {
       res.status(404).json({ error: 'Data siswa tidak ditemukan.' });
       return;
@@ -990,16 +777,15 @@ async function startServer() {
       id,
       vervalPdSyncAt: new Date().toISOString(),
     };
-    store.students[idx] = updated;
-    writeStore(store);
+    students[idx] = updated;
+    writeStudentsRepository(students);
     res.json(updated);
   });
 
   app.delete('/api/students/:id', requirePetugasAuth, (req: Request, res: Response) => {
     const { id } = req.params;
-    const store = readStore();
-    store.students = store.students.filter((s) => s.id !== id);
-    writeStore(store);
+    const students = readStudentsRepository();
+    writeStudentsRepository(students.filter((s) => s.id !== id));
     res.json({ ok: true });
   });
 
@@ -1013,49 +799,59 @@ async function startServer() {
       return;
     }
 
-    const store = readStore();
+    const nowIso = new Date().toISOString();
+    const sanitizedIncoming = incomingList
+      .filter((s): s is DapodikStudent => Boolean(s && typeof s.nama === 'string' && s.nama.trim()))
+      .map((s, idx) => ({
+        ...s,
+        id: s.id?.trim() || `pd-imp-${Date.now()}-${idx}`,
+        vervalPdSyncAt: s.vervalPdSyncAt || nowIso,
+      }));
+
+    let students = readStudentsRepository();
     let addedCount = 0;
     let updatedCount = 0;
 
     if (mode === 'replace') {
-      store.students = incomingList;
-      addedCount = incomingList.length;
+      students = sanitizedIncoming;
+      addedCount = sanitizedIncoming.length;
     } else if (mode === 'append') {
-      store.students = [...incomingList, ...store.students];
-      addedCount = incomingList.length;
+      students = [...sanitizedIncoming, ...students];
+      addedCount = sanitizedIncoming.length;
     } else {
-      for (const incoming of incomingList) {
-        const matchIdx = store.students.findIndex(
+      for (const incoming of sanitizedIncoming) {
+        const matchIdx = students.findIndex(
           (existing) =>
             (incoming.nisn && existing.nisn === incoming.nisn) ||
             (incoming.nipd && existing.nipd === incoming.nipd)
         );
         if (matchIdx >= 0) {
-          store.students[matchIdx] = {
-            ...store.students[matchIdx],
+          students[matchIdx] = {
+            ...students[matchIdx],
             ...incoming,
-            id: store.students[matchIdx].id,
+            id: students[matchIdx].id,
+            vervalPdSyncAt: nowIso,
           };
           updatedCount++;
         } else {
-          store.students.unshift(incoming);
+          students.unshift(incoming);
           addedCount++;
         }
       }
     }
 
-    writeStore(store);
+    const envelope = writeStudentsRepository(students);
     res.json({
-      students: store.students,
+      students: envelope.data,
       addedCount,
       updatedCount,
+      repositoryUpdatedAt: envelope.updatedAt,
     });
   });
 
-  // Protected Agenda Surat Routes
+  // Protected Agenda Surat Repository Routes
   app.get('/api/agenda', requirePetugasAuth, (_req: Request, res: Response) => {
-    const store = readStore();
-    res.json(store.agenda);
+    res.json(readAgendaRepository());
   });
 
   app.post('/api/agenda', requirePetugasAuth, (req: Request, res: Response) => {
@@ -1064,28 +860,26 @@ async function startServer() {
       res.status(400).json({ error: 'Data agenda surat tidak lengkap.' });
       return;
     }
-    const store = readStore();
+    const agenda = readAgendaRepository();
     const saved: AgendaEntry = {
       ...entry,
       id: entry.id || `ag-${Date.now()}`,
     };
-    store.agenda.unshift(saved);
-    writeStore(store);
+    agenda.unshift(saved);
+    writeAgendaRepository(agenda);
     res.status(201).json(saved);
   });
 
   app.delete('/api/agenda/:id', requirePetugasAuth, (req: Request, res: Response) => {
     const { id } = req.params;
-    const store = readStore();
-    store.agenda = store.agenda.filter((item) => item.id !== id);
-    writeStore(store);
+    const agenda = readAgendaRepository();
+    writeAgendaRepository(agenda.filter((item) => item.id !== id));
     res.json({ ok: true });
   });
 
-  // Kop Surat Config Routes (GET public for printed receipts/letters; PUT protected)
+  // Kop Surat & Reporting Portal Config Repository Routes
   app.get('/api/kop-surat', (_req: Request, res: Response) => {
-    const store = readStore();
-    res.json(store.kopSurat);
+    res.json(readSettingsRepository().kopSurat);
   });
 
   app.put('/api/kop-surat', requirePetugasAuth, (req: Request, res: Response) => {
@@ -1094,38 +888,98 @@ async function startServer() {
       res.status(400).json({ error });
       return;
     }
-    const store = readStore();
-    store.kopSurat = config;
-    writeStore(store);
-    res.json(store.kopSurat);
+    const current = readSettingsRepository();
+    writeSettingsRepository({ ...current, kopSurat: config });
+    res.json(config);
   });
 
-  // Reporting Open/Close Portal Routes (GET public; PUT protected)
   app.get('/api/reporting-status', (_req: Request, res: Response) => {
-    const store = readStore();
-    res.json(store.reportingPortal);
+    res.json(readSettingsRepository().reportingPortal);
   });
 
   app.put('/api/reporting-status', requirePetugasAuth, (req: Request, res: Response) => {
-    const store = readStore();
-    const staffName = (res.locals.petugas as SessionPayload | undefined)?.staffName || 'Sulistyowati, S.Pd.';
+    const current = readSettingsRepository();
+    const staffName = resolveActiveStaffName(current.tuStaff);
     const updated = sanitizeReportingPortal(
       {
         ...(req.body as Partial<ReportingPortalConfig>),
         updatedAt: new Date().toISOString(),
         updatedBy: staffName,
       },
-      store.reportingPortal
+      current.reportingPortal || DEFAULT_REPORTING_PORTAL
     );
-    store.reportingPortal = updated;
-    writeStore(store);
-    res.json(store.reportingPortal);
+    writeSettingsRepository({ ...current, reportingPortal: updated });
+    res.json(updated);
   });
 
-  // Protected GTK Dapodik + Dispendukcapil NIK Matching Routes
+  // Petugas TU Delegation & Activation Settings Routes
+  app.get('/api/tu-staff', (_req: Request, res: Response) => {
+    res.json(toPublicTuStaffInfo(readSettingsRepository().tuStaff));
+  });
+
+  app.get('/api/tu-staff/settings', requirePetugasAuth, (_req: Request, res: Response) => {
+    res.json(readSettingsRepository().tuStaff);
+  });
+
+  app.put('/api/tu-staff', requirePetugasAuth, (req: Request, res: Response) => {
+    const current = readSettingsRepository();
+    const gtkList = readGtkRepository();
+    const body = req.body as Partial<TuStaffConfig>;
+    if (!body || typeof body !== 'object') {
+      res.status(400).json({ error: 'Payload pengaturan Petugas TU tidak valid.' });
+      return;
+    }
+
+    const requestedGtkId =
+      typeof body.activeGtkId === 'string' && body.activeGtkId.trim()
+        ? body.activeGtkId.trim()
+        : body.activeGtkId === null
+          ? null
+          : current.tuStaff.activeGtkId;
+
+    if (requestedGtkId) {
+      const existsInGtk = gtkList.some((g) => g.id === requestedGtkId);
+      if (!existsInGtk) {
+        res.status(404).json({
+          error: 'Pegawai TU yang dipilih tidak ditemukan dalam Database GTK Dapodik.',
+        });
+        return;
+      }
+    }
+
+    if (
+      body.activeStaffPhoto !== undefined &&
+      !isSafeRasterImageDataUrl(body.activeStaffPhoto)
+    ) {
+      res.status(400).json({ error: 'Format foto Petugas TU tidak valid.' });
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const actorName = resolveActiveStaffName(current.tuStaff);
+
+    const sanitized = sanitizeTuStaffConfig(
+      {
+        ...current.tuStaff,
+        ...body,
+        activeGtkId: requestedGtkId,
+        updatedAt: nowIso,
+        updatedBy: actorName,
+      },
+      gtkList,
+      DEFAULT_TU_STAFF
+    );
+
+    writeSettingsRepository({
+      ...current,
+      tuStaff: sanitized,
+    });
+    res.json(sanitized);
+  });
+
+  // Protected GTK Dapodik Repository Routes
   app.get('/api/gtk', requirePetugasAuth, (_req: Request, res: Response) => {
-    const store = readStore();
-    res.json(store.gtkList);
+    res.json(readGtkRepository());
   });
 
   app.post('/api/gtk', requirePetugasAuth, (req: Request, res: Response) => {
@@ -1138,14 +992,14 @@ async function startServer() {
       res.status(400).json({ error: 'Format foto PTK tidak valid atau melebihi batas ukuran.' });
       return;
     }
-    const store = readStore();
+    const gtkList = readGtkRepository();
     const checked = applyDispendukcapilCheck({
       ...incoming,
       fotoDataUrl: incoming.fotoDataUrl ?? '',
-      id: `gtk-${Date.now()}`,
+      id: incoming.id?.trim() || `gtk-${Date.now()}`,
     });
-    store.gtkList.unshift(checked);
-    writeStore(store);
+    gtkList.unshift(checked);
+    writeGtkRepository(gtkList);
     res.status(201).json(checked);
   });
 
@@ -1156,8 +1010,8 @@ async function startServer() {
       res.status(400).json({ error: 'Format foto PTK tidak valid atau melebihi batas ukuran.' });
       return;
     }
-    const store = readStore();
-    const idx = store.gtkList.findIndex((g) => g.id === id);
+    const gtkList = readGtkRepository();
+    const idx = gtkList.findIndex((g) => g.id === id);
     if (idx < 0) {
       res.status(404).json({ error: 'Data PTK tidak ditemukan.' });
       return;
@@ -1167,16 +1021,40 @@ async function startServer() {
       fotoDataUrl: incoming.fotoDataUrl ?? '',
       id,
     });
-    store.gtkList[idx] = checked;
-    writeStore(store);
+    gtkList[idx] = checked;
+    writeGtkRepository(gtkList);
     res.json(checked);
   });
 
   app.delete('/api/gtk/:id', requirePetugasAuth, (req: Request, res: Response) => {
     const { id } = req.params;
-    const store = readStore();
-    store.gtkList = store.gtkList.filter((g) => g.id !== id);
-    writeStore(store);
+    const gtkList = readGtkRepository().filter((g) => g.id !== id);
+    writeGtkRepository(gtkList);
+
+    const settings = readSettingsRepository();
+    const hadOperator = settings.tuStaff.operators.some((op) => op.gtkId === id);
+    const wasActive = settings.tuStaff.activeGtkId === id;
+    if (hadOperator || wasActive) {
+      const nextOperators = settings.tuStaff.operators.filter((op) => op.gtkId !== id);
+      const nextFallbackOp = nextOperators.find((op) => op.isActive) || null;
+      const nextTuStaff = sanitizeTuStaffConfig(
+        {
+          ...settings.tuStaff,
+          operators: nextOperators,
+          activeGtkId: wasActive ? (nextFallbackOp?.gtkId ?? null) : settings.tuStaff.activeGtkId,
+          isEnabled: wasActive && !nextFallbackOp ? false : settings.tuStaff.isEnabled,
+          deactivatedReason:
+            wasActive && !nextFallbackOp
+              ? 'Pegawai TU aktif dihapus dari Database GTK Dapodik.'
+              : settings.tuStaff.deactivatedReason,
+          updatedAt: new Date().toISOString(),
+        },
+        gtkList,
+        DEFAULT_TU_STAFF
+      );
+      writeSettingsRepository({ ...settings, tuStaff: nextTuStaff });
+    }
+
     res.json({ ok: true });
   });
 
@@ -1189,71 +1067,73 @@ async function startServer() {
       res.status(400).json({ error: 'Daftar data GTK tidak valid.' });
       return;
     }
-    const store = readStore();
+    let gtkList = readGtkRepository();
     let addedCount = 0;
     let updatedCount = 0;
-    const checkedIncoming = incomingList.map((g, idx) =>
-      applyDispendukcapilCheck({
-        ...g,
-        fotoDataUrl: isSafeRasterImageDataUrl(g.fotoDataUrl ?? '') ? (g.fotoDataUrl ?? '') : '',
-        id: g.id || `gtk-imp-${Date.now()}-${idx}`,
-      })
-    );
+    const checkedIncoming = incomingList
+      .filter((g): g is DapodikGtk => Boolean(g && typeof g.nama === 'string' && g.nama.trim()))
+      .map((g, idx) =>
+        applyDispendukcapilCheck({
+          ...g,
+          fotoDataUrl: isSafeRasterImageDataUrl(g.fotoDataUrl ?? '') ? (g.fotoDataUrl ?? '') : '',
+          id: g.id || `gtk-imp-${Date.now()}-${idx}`,
+        })
+      );
 
     if (mode === 'replace') {
-      store.gtkList = checkedIncoming;
+      gtkList = checkedIncoming;
       addedCount = checkedIncoming.length;
     } else if (mode === 'append') {
-      store.gtkList = [...checkedIncoming, ...store.gtkList];
+      gtkList = [...checkedIncoming, ...gtkList];
       addedCount = checkedIncoming.length;
     } else {
       for (const incoming of checkedIncoming) {
-        const matchIdx = store.gtkList.findIndex(
+        const matchIdx = gtkList.findIndex(
           (existing) =>
             (incoming.nik && existing.nik === incoming.nik) ||
             (incoming.nip && existing.nip === incoming.nip) ||
             (incoming.nuptk && existing.nuptk === incoming.nuptk)
         );
         if (matchIdx >= 0) {
-          store.gtkList[matchIdx] = applyDispendukcapilCheck({
-            ...store.gtkList[matchIdx],
+          gtkList[matchIdx] = applyDispendukcapilCheck({
+            ...gtkList[matchIdx],
             ...incoming,
-            fotoDataUrl: incoming.fotoDataUrl || store.gtkList[matchIdx].fotoDataUrl || '',
-            id: store.gtkList[matchIdx].id,
+            fotoDataUrl: incoming.fotoDataUrl || gtkList[matchIdx].fotoDataUrl || '',
+            id: gtkList[matchIdx].id,
           });
           updatedCount++;
         } else {
-          store.gtkList.unshift(incoming);
+          gtkList.unshift(incoming);
           addedCount++;
         }
       }
     }
 
-    writeStore(store);
+    const envelope = writeGtkRepository(gtkList);
     res.json({
-      gtkList: store.gtkList,
+      gtkList: envelope.data,
       addedCount,
       updatedCount,
+      repositoryUpdatedAt: envelope.updatedAt,
     });
   });
 
   app.post('/api/gtk/padan-dispendukcapil', requirePetugasAuth, (_req: Request, res: Response) => {
-    const store = readStore();
-    store.gtkList = store.gtkList.map(applyDispendukcapilCheck);
-    writeStore(store);
+    const gtkList = readGtkRepository().map(applyDispendukcapilCheck);
+    writeGtkRepository(gtkList);
     res.json({
-      gtkList: store.gtkList,
-      padanCount: store.gtkList.filter((g) => g.dukcapilStatus === 'Padan Dispendukcapil').length,
-      residuCount: store.gtkList.filter((g) => g.dukcapilStatus === 'Residu Data').length,
-      invalidCount: store.gtkList.filter((g) => g.dukcapilStatus === 'Tidak Padan NIK').length,
+      gtkList,
+      padanCount: gtkList.filter((g) => g.dukcapilStatus === 'Padan Dispendukcapil').length,
+      residuCount: gtkList.filter((g) => g.dukcapilStatus === 'Residu Data').length,
+      invalidCount: gtkList.filter((g) => g.dukcapilStatus === 'Tidak Padan NIK').length,
     });
   });
 
-  // Public Rombel lookup (class codes only, no staff PII)
+  // Public Rombel lookup
   app.get('/api/rombel/public', (_req: Request, res: Response) => {
-    const store = readStore();
+    const rombels = readRombelsRepository();
     res.json(
-      store.rombels.map((r) => ({
+      rombels.map((r) => ({
         id: r.id,
         namaRombel: r.namaRombel,
         tingkatKelas: r.tingkatKelas,
@@ -1262,10 +1142,9 @@ async function startServer() {
     );
   });
 
-  // Protected Rombongan Belajar & Wali Kelas Settings Routes
+  // Protected Rombongan Belajar & Wali Kelas Repository Routes
   app.get('/api/rombel', requirePetugasAuth, (_req: Request, res: Response) => {
-    const store = readStore();
-    res.json(store.rombels);
+    res.json(readRombelsRepository());
   });
 
   app.post('/api/rombel', requirePetugasAuth, (req: Request, res: Response) => {
@@ -1274,17 +1153,18 @@ async function startServer() {
       res.status(400).json({ error: 'Nama rombel wajib diisi.' });
       return;
     }
-    const store = readStore();
+    const gtkList = readGtkRepository();
+    const rombels = readRombelsRepository();
     const created = normalizeRombelRecord(
       {
         ...incoming,
-        id: `rombel-${Date.now()}`,
+        id: incoming.id?.trim() || `rombel-${Date.now()}`,
         updatedAt: new Date().toISOString(),
       },
-      store.gtkList
+      gtkList
     );
-    store.rombels = sortRombelsNaturally([...store.rombels, created]);
-    writeStore(store);
+    const nextRombels = sortRombelsNaturally([...rombels, created]);
+    writeRombelsRepository(nextRombels);
     res.status(201).json(created);
   });
 
@@ -1295,32 +1175,32 @@ async function startServer() {
       res.status(400).json({ error: 'Nama rombel wajib diisi.' });
       return;
     }
-    const store = readStore();
-    const idx = store.rombels.findIndex((r) => r.id === id);
+    const gtkList = readGtkRepository();
+    const rombels = readRombelsRepository();
+    const idx = rombels.findIndex((r) => r.id === id);
     if (idx < 0) {
       res.status(404).json({ error: 'Data rombel tidak ditemukan.' });
       return;
     }
     const updated = normalizeRombelRecord(
       {
-        ...store.rombels[idx],
+        ...rombels[idx],
         ...incoming,
         id,
         updatedAt: new Date().toISOString(),
       },
-      store.gtkList
+      gtkList
     );
-    store.rombels[idx] = updated;
-    store.rombels = sortRombelsNaturally(store.rombels);
-    writeStore(store);
+    rombels[idx] = updated;
+    const nextRombels = sortRombelsNaturally(rombels);
+    writeRombelsRepository(nextRombels);
     res.json(updated);
   });
 
   app.delete('/api/rombel/:id', requirePetugasAuth, (req: Request, res: Response) => {
     const { id } = req.params;
-    const store = readStore();
-    store.rombels = store.rombels.filter((r) => r.id !== id);
-    writeStore(store);
+    const rombels = readRombelsRepository();
+    writeRombelsRepository(rombels.filter((r) => r.id !== id));
     res.json({ ok: true });
   });
 
@@ -1333,7 +1213,8 @@ async function startServer() {
       res.status(400).json({ error: 'Daftar rombongan belajar tidak valid.' });
       return;
     }
-    const store = readStore();
+    const gtkList = readGtkRepository();
+    let rombels = readRombelsRepository();
     let addedCount = 0;
     let updatedCount = 0;
 
@@ -1345,45 +1226,46 @@ async function startServer() {
             ...r,
             id: r.id || `rombel-imp-${Date.now()}-${idx}`,
           },
-          store.gtkList
+          gtkList
         )
       );
 
     if (mode === 'replace') {
-      store.rombels = sortRombelsNaturally(normalizedIncoming);
+      rombels = sortRombelsNaturally(normalizedIncoming);
       addedCount = normalizedIncoming.length;
     } else if (mode === 'append') {
-      store.rombels = sortRombelsNaturally([...store.rombels, ...normalizedIncoming]);
+      rombels = sortRombelsNaturally([...rombels, ...normalizedIncoming]);
       addedCount = normalizedIncoming.length;
     } else {
       for (const incoming of normalizedIncoming) {
-        const matchIdx = store.rombels.findIndex(
+        const matchIdx = rombels.findIndex(
           (existing) => existing.namaRombel.toUpperCase() === incoming.namaRombel.toUpperCase()
         );
         if (matchIdx >= 0) {
-          store.rombels[matchIdx] = normalizeRombelRecord(
+          rombels[matchIdx] = normalizeRombelRecord(
             {
-              ...store.rombels[matchIdx],
+              ...rombels[matchIdx],
               ...incoming,
-              id: store.rombels[matchIdx].id,
+              id: rombels[matchIdx].id,
               updatedAt: new Date().toISOString(),
             },
-            store.gtkList
+            gtkList
           );
           updatedCount++;
         } else {
-          store.rombels.push(incoming);
+          rombels.push(incoming);
           addedCount++;
         }
       }
-      store.rombels = sortRombelsNaturally(store.rombels);
+      rombels = sortRombelsNaturally(rombels);
     }
 
-    writeStore(store);
+    const envelope = writeRombelsRepository(rombels);
     res.json({
-      rombels: store.rombels,
+      rombels: envelope.data,
       addedCount,
       updatedCount,
+      repositoryUpdatedAt: envelope.updatedAt,
     });
   });
 

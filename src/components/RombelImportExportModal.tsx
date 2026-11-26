@@ -21,7 +21,7 @@ interface RombelImportExportModalProps {
   rombels: DapodikRombel[];
   gtkList: DapodikGtk[];
   onClose: () => void;
-  onConfirmImport: (imported: DapodikRombel[], mode: ImportMergeMode) => void;
+  onConfirmImport: (imported: DapodikRombel[], mode: ImportMergeMode) => Promise<boolean | void> | void;
 }
 
 export function RombelImportExportModal({
@@ -35,6 +35,7 @@ export function RombelImportExportModal({
   const [activeTab, setActiveTab] = useState<'import' | 'export'>(initialTab);
   const [mergeMode, setMergeMode] = useState<ImportMergeMode>('upsert');
   const [parsing, setParsing] = useState(false);
+  const [savingImport, setSavingImport] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [fileName, setFileName] = useState('');
   const [parsedResult, setParsedResult] = useState<ParsedRombelImport | null>(null);
@@ -296,14 +297,32 @@ export function RombelImportExportModal({
           {activeTab === 'import' && parsedResult && (
             <button
               type="button"
-              onClick={() => {
-                onConfirmImport(parsedResult.rombels, mergeMode);
-                onClose();
+              disabled={savingImport}
+              onClick={async () => {
+                if (savingImport) return;
+                setSavingImport(true);
+                setErrorMsg('');
+                try {
+                  const res = await onConfirmImport(parsedResult.rombels, mergeMode);
+                  if (res !== false) {
+                    setParsedResult(null);
+                    setFileName('');
+                    onClose();
+                  } else {
+                    setErrorMsg('Gagal menyimpan ke repositori Rombel. Silakan coba lagi.');
+                  }
+                } finally {
+                  setSavingImport(false);
+                }
               }}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-700 px-4 text-xs font-semibold text-white hover:bg-blue-800"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-700 px-4 text-xs font-semibold text-white hover:bg-blue-800 disabled:bg-blue-400"
             >
               <Upload className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Simpan {parsedResult.rombels.length} Rombel</span>
+              <span>
+                {savingImport
+                  ? 'Menyimpan ke Repositori...'
+                  : `Simpan ${parsedResult.rombels.length} Rombel`}
+              </span>
             </button>
           )}
         </div>

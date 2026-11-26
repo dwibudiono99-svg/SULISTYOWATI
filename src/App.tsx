@@ -14,9 +14,11 @@ import { EditRequestPayload, RequestDetailDrawer } from './components/RequestDet
 import { RombelWaliKelasView } from './components/RombelWaliKelasView';
 import { Sidebar } from './components/Sidebar';
 import { SubmitRequestView } from './components/SubmitRequestView';
+import { TuStaffSettingsModal } from './components/TuStaffSettingsModal';
 import {
   DEFAULT_KOP_SURAT_CONFIG,
   DEFAULT_REPORTING_PORTAL_CONFIG,
+  DEFAULT_TU_STAFF_CONFIG,
   SCHOOL_INFO,
 } from './config/schoolConfig';
 import {
@@ -25,10 +27,12 @@ import {
   DapodikRombel,
   DapodikStudent,
   KopSuratConfig,
+  PublicTuStaffInfo,
   ReportingPortalConfig,
   RequestStatus,
   ServiceCategoryId,
   ServiceRequest,
+  TuStaffConfig,
   UserMode,
   WorkspaceTab,
 } from './types/tu';
@@ -51,6 +55,7 @@ export default function App() {
   const [tokenModalMode, setTokenModalMode] = useState<'login' | 'claim' | 'change'>('login');
   const [pendingTargetTab, setPendingTargetTab] = useState<WorkspaceTab | null>(null);
   const [reportingModalOpen, setReportingModalOpen] = useState(false);
+  const [tuStaffModalOpen, setTuStaffModalOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
@@ -62,6 +67,7 @@ export default function App() {
   const [reportingPortal, setReportingPortal] = useState<ReportingPortalConfig>(
     DEFAULT_REPORTING_PORTAL_CONFIG
   );
+  const [tuStaffConfig, setTuStaffConfig] = useState<TuStaffConfig>(DEFAULT_TU_STAFF_CONFIG);
 
   const [selectedServiceId, setSelectedServiceId] = useState<ServiceCategoryId>('surat-aktif');
   const [prefillStudent, setPrefillStudent] = useState<DapodikStudent | null>(null);
@@ -125,6 +131,26 @@ export default function App() {
     }
   }, []);
 
+  const loadPublicTuStaff = useCallback(async () => {
+    try {
+      const res = await fetch('/api/tu-staff');
+      if (res.ok) {
+        const data = (await res.json()) as PublicTuStaffInfo;
+        setTuStaffConfig((prev) => ({
+          ...prev,
+          isEnabled: data.isEnabled,
+          activeStaffName: data.activeStaffName,
+          activeStaffRole: data.activeStaffRole,
+          activeStaffPhoto: data.activeStaffPhoto,
+          deactivatedReason: data.deactivatedReason,
+          updatedAt: data.updatedAt,
+        }));
+      }
+    } catch {
+      // Fallback to default config
+    }
+  }, []);
+
   const handleLockToPemohon = useCallback(
     (message?: string) => {
       setSessionToken(null);
@@ -139,21 +165,23 @@ export default function App() {
       setPrintDocMode('tanda-terima');
       void refreshAuthStatus(null);
       void loadPublicRequests();
+      void loadPublicTuStaff();
       if (message) setToastMessage(message);
     },
-    [loadPublicRequests, refreshAuthStatus]
+    [loadPublicRequests, loadPublicTuStaff, refreshAuthStatus]
   );
 
   const loadProtectedData = useCallback(
     async (token: string) => {
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        const [reqRes, stuRes, gtkRes, rombelRes, agRes] = await Promise.all([
+        const [reqRes, stuRes, gtkRes, rombelRes, agRes, tuStaffRes] = await Promise.all([
           fetch('/api/requests', { headers }),
           fetch('/api/students', { headers }),
           fetch('/api/gtk', { headers }),
           fetch('/api/rombel', { headers }),
           fetch('/api/agenda', { headers }),
+          fetch('/api/tu-staff/settings', { headers }),
         ]);
 
         if (
@@ -161,7 +189,8 @@ export default function App() {
           stuRes.status === 401 ||
           gtkRes.status === 401 ||
           rombelRes.status === 401 ||
-          agRes.status === 401
+          agRes.status === 401 ||
+          tuStaffRes.status === 401
         ) {
           handleLockToPemohon('Sesi Petugas TU berakhir. Silakan verifikasi token kembali.');
           return;
@@ -172,6 +201,7 @@ export default function App() {
         if (gtkRes.ok) setGtkList((await gtkRes.json()) as DapodikGtk[]);
         if (rombelRes.ok) setRombels((await rombelRes.json()) as DapodikRombel[]);
         if (agRes.ok) setAgendaEntries((await agRes.json()) as AgendaEntry[]);
+        if (tuStaffRes.ok) setTuStaffConfig((await tuStaffRes.json()) as TuStaffConfig);
       } catch {
         setToastMessage('Gagal memuat data Petugas TU dari server.');
       }
@@ -192,7 +222,8 @@ export default function App() {
     void loadPublicRequests();
     void loadKopSurat();
     void loadReportingStatus();
-  }, [loadKopSurat, loadPublicRequests, loadReportingStatus, refreshAuthStatus]);
+    void loadPublicTuStaff();
+  }, [loadKopSurat, loadPublicRequests, loadPublicTuStaff, loadReportingStatus, refreshAuthStatus]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -348,7 +379,8 @@ export default function App() {
     newStatus: RequestStatus,
     letterNumber: string,
     staffNote: string,
-    addToAgenda: boolean
+    addToAgenda: boolean,
+    assignedStaff?: string
   ) => {
     if (!sessionToken) {
       void requestPetugasAccess('antrean');
@@ -362,7 +394,7 @@ export default function App() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${sessionToken}`,
         },
-        body: JSON.stringify({ newStatus, letterNumber, staffNote, addToAgenda }),
+        body: JSON.stringify({ newStatus, letterNumber, staffNote, addToAgenda, assignedStaff }),
       });
 
       if (res.status === 401) {
@@ -526,8 +558,8 @@ export default function App() {
   const handleImportStudents = async (
     imported: DapodikStudent[],
     mode: ImportMergeMode
-  ) => {
-    if (!sessionToken) return;
+  ): Promise<boolean> => {
+    if (!sessionToken) return false;
     try {
       const res = await fetch('/api/students/import', {
         method: 'POST',
@@ -540,12 +572,13 @@ export default function App() {
 
       if (res.status === 401) {
         handleLockToPemohon('Sesi Petugas TU berakhir.');
-        return;
+        return false;
       }
 
       if (!res.ok) {
-        setToastMessage('Gagal mengimpor file data siswa.');
-        return;
+        const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+        setToastMessage(errBody?.error || 'Gagal menyimpan impor data siswa ke database repositori.');
+        return false;
       }
 
       const result = (await res.json()) as {
@@ -555,10 +588,12 @@ export default function App() {
       };
       setStudents(result.students);
       setToastMessage(
-        `Impor selesai: ${result.addedCount} siswa baru ditambahkan, ${result.updatedCount} data siswa diperbarui.`
+        `Impor selesai & tersimpan di repositori Siswa: ${result.addedCount} siswa baru, ${result.updatedCount} diperbarui (total ${result.students.length} siswa).`
       );
+      return true;
     } catch {
-      setToastMessage('Gagal mengimpor data ke server.');
+      setToastMessage('Gagal mengimpor data siswa ke server repositori.');
+      return false;
     }
   };
 
@@ -679,6 +714,43 @@ export default function App() {
     }
   };
 
+  const handleSaveTuStaff = async (nextConfig: Partial<TuStaffConfig>): Promise<boolean> => {
+    if (!sessionToken) {
+      void requestPetugasAccess('gtk');
+      return false;
+    }
+    try {
+      const res = await fetch('/api/tu-staff', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify(nextConfig),
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir.');
+        return false;
+      }
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+        setToastMessage(errBody?.error || 'Gagal menyimpan pengaturan Petugas TU.');
+        return false;
+      }
+      const updated = (await res.json()) as TuStaffConfig;
+      setTuStaffConfig(updated);
+      setToastMessage(
+        updated.isEnabled
+          ? `Petugas TU aktif ditetapkan ke ${updated.activeStaffName}.`
+          : 'Penugasan Petugas TU dinonaktifkan.'
+      );
+      return true;
+    } catch {
+      setToastMessage('Terjadi gangguan koneksi saat menyimpan pengaturan Petugas TU.');
+      return false;
+    }
+  };
+
   const handleSaveGtk = async (saved: DapodikGtk, isNew: boolean) => {
     if (!sessionToken) return;
     try {
@@ -703,6 +775,14 @@ export default function App() {
       setGtkList((prev) =>
         isNew ? [record, ...prev] : prev.map((item) => (item.id === record.id ? record : item))
       );
+      if (!isNew && tuStaffConfig.activeGtkId === record.id) {
+        const staffRes = await fetch('/api/tu-staff/settings', {
+          headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+        if (staffRes.ok) {
+          setTuStaffConfig((await staffRes.json()) as TuStaffConfig);
+        }
+      }
       setToastMessage(
         `Data GTK ${record.nama} disimpan (${record.dukcapilStatus}).`
       );
@@ -724,6 +804,12 @@ export default function App() {
       }
       if (res.ok) {
         setGtkList((prev) => prev.filter((item) => item.id !== id));
+        const staffRes = await fetch('/api/tu-staff/settings', {
+          headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+        if (staffRes.ok) {
+          setTuStaffConfig((await staffRes.json()) as TuStaffConfig);
+        }
         setToastMessage('Data GTK dihapus dari database.');
       }
     } catch {
@@ -731,8 +817,11 @@ export default function App() {
     }
   };
 
-  const handleImportGtk = async (imported: DapodikGtk[], mode: ImportMergeMode) => {
-    if (!sessionToken) return;
+  const handleImportGtk = async (
+    imported: DapodikGtk[],
+    mode: ImportMergeMode
+  ): Promise<boolean> => {
+    if (!sessionToken) return false;
     try {
       const res = await fetch('/api/gtk/import', {
         method: 'POST',
@@ -744,11 +833,12 @@ export default function App() {
       });
       if (res.status === 401) {
         handleLockToPemohon('Sesi Petugas TU berakhir.');
-        return;
+        return false;
       }
       if (!res.ok) {
-        setToastMessage('Gagal mengimpor file GTK Dapodik.');
-        return;
+        const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+        setToastMessage(errBody?.error || 'Gagal menyimpan impor data GTK ke database repositori.');
+        return false;
       }
       const result = (await res.json()) as {
         gtkList: DapodikGtk[];
@@ -757,10 +847,12 @@ export default function App() {
       };
       setGtkList(result.gtkList);
       setToastMessage(
-        `Impor GTK selesai & dipadankan Dispendukcapil: ${result.addedCount} GTK baru, ${result.updatedCount} diperbarui.`
+        `Impor GTK selesai & tersimpan di repositori PTK: ${result.addedCount} GTK baru, ${result.updatedCount} diperbarui (total ${result.gtkList.length} GTK).`
       );
+      return true;
     } catch {
-      setToastMessage('Gagal mengimpor data GTK ke server.');
+      setToastMessage('Gagal mengimpor data GTK ke server repositori.');
+      return false;
     }
   };
 
@@ -844,8 +936,11 @@ export default function App() {
     }
   };
 
-  const handleImportRombels = async (imported: DapodikRombel[], mode: ImportMergeMode) => {
-    if (!sessionToken) return;
+  const handleImportRombels = async (
+    imported: DapodikRombel[],
+    mode: ImportMergeMode
+  ): Promise<boolean> => {
+    if (!sessionToken) return false;
     try {
       const res = await fetch('/api/rombel/import', {
         method: 'POST',
@@ -857,11 +952,12 @@ export default function App() {
       });
       if (res.status === 401) {
         handleLockToPemohon('Sesi Petugas TU berakhir.');
-        return;
+        return false;
       }
       if (!res.ok) {
-        setToastMessage('Gagal mengimpor file rombongan belajar.');
-        return;
+        const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+        setToastMessage(errBody?.error || 'Gagal menyimpan impor rombel ke database repositori.');
+        return false;
       }
       const result = (await res.json()) as {
         rombels: DapodikRombel[];
@@ -870,10 +966,12 @@ export default function App() {
       };
       setRombels(result.rombels);
       setToastMessage(
-        `Impor rombel selesai: ${result.addedCount} baru, ${result.updatedCount} diperbarui.`
+        `Impor rombel selesai & tersimpan di repositori Rombel: ${result.addedCount} baru, ${result.updatedCount} diperbarui.`
       );
+      return true;
     } catch {
-      setToastMessage('Gagal mengimpor data rombel ke server.');
+      setToastMessage('Gagal mengimpor data rombel ke server repositori.');
+      return false;
     }
   };
 
@@ -902,6 +1000,8 @@ export default function App() {
           setTokenModalOpen(true);
         }}
         onOpenReportingControl={() => setReportingModalOpen(true)}
+        onOpenTuStaffSettings={() => setTuStaffModalOpen(true)}
+        tuStaff={tuStaffConfig}
         reportingPortal={reportingPortal}
         canChangeToken={!authStatus.hasEnvToken}
         pendingCount={pendingCount}
@@ -1041,6 +1141,7 @@ export default function App() {
                 onImportGtk={handleImportGtk}
                 onBatchPadanDispendukcapil={handleBatchPadanDispendukcapil}
                 onCreateLetterFromGtk={handleCreateLetterFromGtk}
+                onOpenTuStaffSettings={() => setTuStaffModalOpen(true)}
               />
             ) : (
               <div className="rounded-xl border border-slate-200 bg-white px-6 py-16 text-center">
@@ -1134,6 +1235,7 @@ export default function App() {
               agendaEntries={agendaEntries}
               userMode={userMode}
               kopSurat={kopSuratConfig}
+              tuStaff={tuStaffConfig}
               onSaveKopSurat={handleSaveKopSurat}
               selectedRequestId={printTargetId}
               initialDocMode={printDocMode}
@@ -1167,6 +1269,10 @@ export default function App() {
       <RequestDetailDrawer
         request={inspectedRequest}
         userMode={userMode}
+        activeStaffName={
+          tuStaffConfig.isEnabled ? tuStaffConfig.activeStaffName : 'Petugas TU (Nonaktif)'
+        }
+        gtkList={gtkList}
         totalLettersCount={agendaEntries.filter((e) => e.type === 'Surat Keluar').length}
         initialEditMode={drawerInitialEdit}
         onClose={() => {
@@ -1200,6 +1306,15 @@ export default function App() {
         config={reportingPortal}
         onClose={() => setReportingModalOpen(false)}
         onSave={handleSaveReportingStatus}
+      />
+
+      <TuStaffSettingsModal
+        open={tuStaffModalOpen}
+        config={tuStaffConfig}
+        gtkList={gtkList}
+        onClose={() => setTuStaffModalOpen(false)}
+        onSave={handleSaveTuStaff}
+        onOpenGtkDatabase={() => setActiveTab('gtk')}
       />
     </div>
   );

@@ -173,14 +173,19 @@ export function padankanNikDispendukcapil(gtk: DapodikGtk): GtkDispendukcapilRes
   const invalidFields: string[] = [];
   const warningFields: string[] = [];
 
-  const nik = gtk.nik.trim();
-  const noKk = gtk.noKk.trim();
-  const ibu = gtk.namaIbuKandung.trim();
+  const nik = (gtk.nik ?? '').trim();
+  const noKk = (gtk.noKk ?? '').trim();
+  const ibu = (gtk.namaIbuKandung ?? '').trim();
+  const nama = (gtk.nama ?? '').trim();
+  const tanggalLahir = (gtk.tanggalLahir ?? '').trim();
+  const nip = (gtk.nip ?? '').trim();
+  const nuptk = (gtk.nuptk ?? '').trim();
+  const tempatLahir = (gtk.tempatLahir ?? '').trim();
 
   let decodedRegion = 'Kode wilayah tidak terbaca';
   let decodedBirthAndGender = 'Tanggal lahir & JK NIK tidak terbaca';
 
-  if (!gtk.nama.trim() || gtk.nama.trim().length < 3) {
+  if (!nama || nama.length < 3) {
     invalidFields.push('Nama lengkap GTK sesuai KTP/SK wajib diisi.');
   }
 
@@ -224,7 +229,7 @@ export function padankanNikDispendukcapil(gtk: DapodikGtk): GtkDispendukcapilRes
         );
       }
 
-      const tglMatch = gtk.tanggalLahir.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+      const tglMatch = tanggalLahir.match(/^(\d{4})-(\d{2})-(\d{2})/);
       if (tglMatch) {
         const [, yearStr, monthStr, dayStr] = tglMatch;
         const expDay = Number.parseInt(dayStr, 10);
@@ -259,16 +264,16 @@ export function padankanNikDispendukcapil(gtk: DapodikGtk): GtkDispendukcapilRes
       gtk.statusKepegawaian === 'PPPK' ||
       gtk.statusKepegawaian === 'PPPK Paruh Waktu' ||
       gtk.statusKepegawaian === 'CPNS') &&
-    (!DIGITS_ONLY.test(gtk.nip.trim()) || gtk.nip.trim().length !== 18)
+    (!DIGITS_ONLY.test(nip) || nip.length !== 18)
   ) {
     warningFields.push(`NIP ${gtk.statusKepegawaian} seharusnya 18 digit angka.`);
   }
 
-  if (gtk.nuptk.trim() && (!DIGITS_ONLY.test(gtk.nuptk.trim()) || gtk.nuptk.trim().length !== 16)) {
+  if (nuptk && (!DIGITS_ONLY.test(nuptk) || nuptk.length !== 16)) {
     warningFields.push('NUPTK tidak 16 digit angka.');
   }
 
-  if (!gtk.tempatLahir.trim()) {
+  if (!tempatLahir) {
     warningFields.push('Tempat lahir GTK belum diisi.');
   }
 

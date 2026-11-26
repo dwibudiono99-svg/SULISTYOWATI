@@ -25,7 +25,7 @@ interface DapodikImportExportModalProps {
   initialTab?: 'import' | 'export';
   students: DapodikStudent[];
   onClose: () => void;
-  onConfirmImport: (imported: DapodikStudent[], mode: ImportMergeMode) => void;
+  onConfirmImport: (imported: DapodikStudent[], mode: ImportMergeMode) => Promise<boolean | void> | void;
 }
 
 export function DapodikImportExportModal({
@@ -39,6 +39,7 @@ export function DapodikImportExportModal({
   const [mergeMode, setMergeMode] = useState<ImportMergeMode>('upsert');
   const [dragging, setDragging] = useState(false);
   const [parsing, setParsing] = useState(false);
+  const [savingImport, setSavingImport] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [fileName, setFileName] = useState('');
   const [parsedResult, setParsedResult] = useState<ParsedDapodikImport | null>(null);
@@ -553,16 +554,32 @@ export function DapodikImportExportModal({
             {activeTab === 'import' && parsedResult && (
               <button
                 type="button"
-                onClick={() => {
-                  onConfirmImport(parsedResult.students, mergeMode);
-                  setParsedResult(null);
-                  setFileName('');
-                  onClose();
+                disabled={savingImport}
+                onClick={async () => {
+                  if (savingImport) return;
+                  setSavingImport(true);
+                  setErrorMsg('');
+                  try {
+                    const res = await onConfirmImport(parsedResult.students, mergeMode);
+                    if (res !== false) {
+                      setParsedResult(null);
+                      setFileName('');
+                      onClose();
+                    } else {
+                      setErrorMsg('Gagal menyimpan ke repositori Siswa. Silakan coba lagi.');
+                    }
+                  } finally {
+                    setSavingImport(false);
+                  }
                 }}
-                className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-800"
+                className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-800 disabled:bg-blue-400"
               >
                 <Upload className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>Impor {parsedResult.students.length} Siswa ke Database</span>
+                <span>
+                  {savingImport
+                    ? 'Menyimpan ke Repositori...'
+                    : `Impor ${parsedResult.students.length} Siswa ke Database`}
+                </span>
               </button>
             )}
           </div>

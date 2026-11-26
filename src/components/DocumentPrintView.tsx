@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { SCHOOL_INFO } from '../config/schoolConfig';
-import { AgendaEntry, KopSuratConfig, ServiceRequest, UserMode } from '../types/tu';
+import { AgendaEntry, KopSuratConfig, PublicTuStaffInfo, ServiceRequest, UserMode } from '../types/tu';
 import { formatTanggalIndonesia, formatTanggalSuratResmi } from '../utils/formatters';
 import {
   downloadOfficialLetterPdf,
@@ -26,6 +26,7 @@ interface DocumentPrintViewProps {
   agendaEntries: AgendaEntry[];
   userMode: UserMode;
   kopSurat: KopSuratConfig;
+  tuStaff: PublicTuStaffInfo;
   onSaveKopSurat: (nextConfig: KopSuratConfig) => Promise<boolean>;
   selectedRequestId?: string;
   initialDocMode?: PrintDocumentMode;
@@ -69,6 +70,7 @@ export function DocumentPrintView({
   agendaEntries,
   userMode,
   kopSurat,
+  tuStaff,
   onSaveKopSurat,
   selectedRequestId,
   initialDocMode = 'tanda-terima',
@@ -177,6 +179,7 @@ export function DocumentPrintView({
           periodLabel: formatMonthKeyLabel(reportPeriod),
           principalName,
           principalNip,
+          staffName: tuStaff.isEnabled ? tuStaff.activeStaffName : 'Petugas TU (Nonaktif)',
         });
       } else if (docMode === 'surat' && isPetugas && activeReq) {
         await downloadOfficialLetterPdf({
@@ -189,6 +192,7 @@ export function DocumentPrintView({
         await downloadReceiptPdf({
           request: activeReq,
           kopSurat,
+          staffName: tuStaff.isEnabled ? tuStaff.activeStaffName : 'Petugas TU (Nonaktif)',
         });
       }
     } catch {
@@ -704,7 +708,7 @@ export function DocumentPrintView({
                   <p className="mt-0.5 font-medium">Koordinator Tata Usaha,</p>
                   <div className="h-16" />
                   <p className="font-bold underline underline-offset-2">
-                    {SCHOOL_INFO.staffName}
+                    {tuStaff.isEnabled ? tuStaff.activeStaffName : 'Petugas TU (Nonaktif)'}
                   </p>
                 </div>
                 <div className="w-64">
@@ -976,7 +980,10 @@ export function DocumentPrintView({
                   </p>
                   <p>Petugas Loket TU,</p>
                   <div className="h-14" />
-                  <p className="font-semibold">{activeReq.assignedStaff}</p>
+                  <p className="font-semibold">
+                    {activeReq.assignedStaff ||
+                      (tuStaff.isEnabled ? tuStaff.activeStaffName : 'Petugas TU (Nonaktif)')}
+                  </p>
                 </div>
               </div>
             </div>

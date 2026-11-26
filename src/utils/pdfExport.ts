@@ -306,8 +306,9 @@ export async function downloadOfficialLetterPdf(params: {
 export async function downloadReceiptPdf(params: {
   request: ServiceRequest;
   kopSurat: KopSuratConfig;
+  staffName?: string;
 }): Promise<void> {
-  const { request, kopSurat } = params;
+  const { request, kopSurat, staffName } = params;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
   const marginX = 20;
@@ -405,7 +406,7 @@ export async function downloadReceiptPdf(params: {
   );
   doc.text('Petugas Loket TU,', signX, y + 5);
   doc.setFont('helvetica', 'bold');
-  doc.text(request.assignedStaff || SCHOOL_INFO.staffName, signX, y + 23);
+  doc.text(request.assignedStaff || staffName || SCHOOL_INFO.staffName, signX, y + 23);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
@@ -427,8 +428,9 @@ export async function downloadRekapLaporanPdf(params: {
   periodLabel: string;
   principalName: string;
   principalNip: string;
+  staffName?: string;
 }): Promise<void> {
-  const { requests, agendaEntries, kopSurat, periodLabel, principalName, principalNip } = params;
+  const { requests, agendaEntries, kopSurat, periodLabel, principalName, principalNip, staffName } = params;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
   const marginX = 16;
@@ -555,7 +557,7 @@ export async function downloadRekapLaporanPdf(params: {
   doc.text('Mengetahui,', marginX, signY);
   doc.text('Koordinator Tata Usaha,', marginX, signY + 5);
   doc.setFont('helvetica', 'bold');
-  doc.text(SCHOOL_INFO.staffName, marginX, signY + 24);
+  doc.text(staffName || SCHOOL_INFO.staffName, marginX, signY + 24);
 
   const safePeriod = periodLabel.replace(/[^a-zA-Z0-9_-]/g, '_');
   doc.save(`Laporan_Pelayanan_TU_SMAN9_${safePeriod}.pdf`);
