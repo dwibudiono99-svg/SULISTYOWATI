@@ -91,7 +91,7 @@ export function getStatusMeta(status: RequestStatus): {
 }
 
 export function generateTicketCode(existingCount: number): string {
-  const num = 153 + existingCount;
+  const num = 1 + existingCount;
   return `TU-2026-${String(num).padStart(4, '0')}`;
 }
 

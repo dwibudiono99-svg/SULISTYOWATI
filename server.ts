@@ -14,9 +14,7 @@ import type {
   ReportingPortalConfig,
   ServiceRequest,
 } from './src/types/tu.ts';
-import { buildSman9PtkSeeds } from './src/data/sman9GtkSeeds.ts';
-import { buildSman9RombelSeeds } from './src/data/sman9RombelSeeds.ts';
-import { applyDispendukcapilCheck } from './src/utils/gtkDapodikValidation.ts';
+import { applyDispendukcapilCheck, formatPtkDisplayName } from './src/utils/gtkDapodikValidation.ts';
 import { normalizeRombelRecord, sortRombelsNaturally } from './src/utils/rombelDapodikUtils.ts';
 
 const PORT = 3000;
@@ -116,7 +114,7 @@ function loadInitialSeeds(): Pick<ServerStore, 'students' | 'requests' | 'agenda
 }
 
 function loadInitialGtkSeeds(): DapodikGtk[] {
-  return buildSman9PtkSeeds().map(applyDispendukcapilCheck);
+  return [];
 }
 
 const BUILTIN_KOP_ASSETS = new Set([
@@ -220,10 +218,8 @@ function sanitizeReportingPortal(
   };
 }
 
-function loadInitialRombelSeeds(gtkList: DapodikGtk[]): DapodikRombel[] {
-  return sortRombelsNaturally(
-    buildSman9RombelSeeds().map((r) => normalizeRombelRecord(r, gtkList))
-  );
+function loadInitialRombelSeeds(_gtkList: DapodikGtk[]): DapodikRombel[] {
+  return [];
 }
 
 function readStore(): ServerStore {
@@ -253,20 +249,12 @@ function readStore(): ServerStore {
     const reportingPortal = parsed.reportingPortal
       ? sanitizeReportingPortal(parsed.reportingPortal, DEFAULT_REPORTING_PORTAL)
       : DEFAULT_REPORTING_PORTAL;
-    const hasLegacyGtkOnly =
-      Array.isArray(parsed.gtkList) &&
-      parsed.gtkList.length <= 6 &&
-      parsed.gtkList.every(
-        (g) => typeof g?.id === 'string' && /^gtk-00[1-6]$/.test(g.id)
-      );
-    const gtkList =
-      Array.isArray(parsed.gtkList) && !hasLegacyGtkOnly
-        ? parsed.gtkList.map(applyDispendukcapilCheck)
-        : loadInitialGtkSeeds();
-    const rombels =
-      Array.isArray(parsed.rombels) && parsed.rombels.length > 0
-        ? sortRombelsNaturally(parsed.rombels.map((r) => normalizeRombelRecord(r, gtkList)))
-        : loadInitialRombelSeeds(gtkList);
+    const gtkList = Array.isArray(parsed.gtkList)
+      ? parsed.gtkList.map(applyDispendukcapilCheck)
+      : loadInitialGtkSeeds();
+    const rombels = Array.isArray(parsed.rombels)
+      ? sortRombelsNaturally(parsed.rombels.map((r) => normalizeRombelRecord(r, gtkList)))
+      : loadInitialRombelSeeds(gtkList);
     const students = Array.isArray(parsed.students)
       ? parsed.students.filter((s) => !isLegacyDummyStudent(s))
       : seeds.students;
@@ -537,6 +525,121 @@ async function startServer() {
     res.json({ ok: true });
   });
 
+  // Controlled Public Dapodik Lookup (returns non-sensitive letter-form fields only; never NIK/KK/NPWP/Ibu)
+  app.get('/api/dapodik/lookup-student', (req: Request, res: Response) => {
+    const rawQ = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const digitsOnly = rawQ.replace(/\D/g, '');
+    const normalizedQ = rawQ.toLowerCase();
+    if (rawQ.length < 4) {
+      res.json({ found: false, student: null });
+      return;
+    }
+
+    const store = readStore();
+    const matched = store.students.find((s) => {
+      const nisn = String(s.nisn ?? '').trim();
+      const nipd = String(s.nipd ?? '').trim();
+      if (digitsOnly.length >= 4) {
+        if (nisn && nisn.replace(/\D/g, '') === digitsOnly) return true;
+        if (nipd && nipd.replace(/\D/g, '') === digitsOnly) return true;
+      }
+      return (
+        (nisn && nisn.toLowerCase() === normalizedQ) ||
+        (nipd && nipd.toLowerCase() === normalizedQ)
+      );
+    });
+
+    if (!matched) {
+      res.json({ found: false, student: null });
+      return;
+    }
+
+    res.json({
+      found: true,
+      student: {
+        id: matched.id,
+        nama: matched.nama,
+        nipd: matched.nipd,
+        nisn: matched.nisn,
+        jk: matched.jk,
+        tempatLahir: matched.tempatLahir,
+        tanggalLahir: matched.tanggalLahir,
+        rombelSaatIni: matched.rombelSaatIni,
+        tingkatKelas: matched.tingkatKelas,
+        statusSiswa: matched.statusSiswa,
+        hp: matched.hp || matched.telepon || '',
+      },
+    });
+  });
+
+  app.get('/api/dapodik/lookup-gtk', (req: Request, res: Response) => {
+    const rawQ = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (rawQ.length < 3) {
+      res.json({ found: false, exact: false, gtk: null, candidates: [] });
+      return;
+    }
+
+    const digitsOnly = rawQ.replace(/\D/g, '');
+    const normalizedQ = rawQ.replace(/\s+/g, ' ').toLowerCase();
+    const store = readStore();
+
+    const toPublicGtk = (g: DapodikGtk) => ({
+      id: g.id,
+      nama: g.nama,
+      displayName: formatPtkDisplayName(g),
+      gelarDepan: g.gelarDepan ?? '',
+      gelarBelakang: g.gelarBelakang ?? '',
+      nip: g.nip,
+      nuptk: g.nuptk,
+      jenisPtk: g.jenisPtk,
+      jabatanPtk: g.jabatanPtk ?? '',
+      tugasTambahan: g.tugasTambahan,
+      statusKepegawaian: g.statusKepegawaian,
+      dukcapilStatus: g.dukcapilStatus,
+      hp: g.hp,
+      fotoDataUrl: g.fotoDataUrl ?? '',
+    });
+
+    const exactMatch = store.gtkList.find((g) => {
+      const nipDigits = String(g.nip ?? '').replace(/\D/g, '');
+      const nuptkDigits = String(g.nuptk ?? '').replace(/\D/g, '');
+      const bareName = String(g.nama ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+      const fullDisplay = formatPtkDisplayName(g).trim().replace(/\s+/g, ' ').toLowerCase();
+      if (digitsOnly.length >= 8) {
+        if (nipDigits && nipDigits === digitsOnly) return true;
+        if (nuptkDigits && nuptkDigits === digitsOnly) return true;
+      }
+      return bareName === normalizedQ || fullDisplay === normalizedQ;
+    });
+
+    if (exactMatch) {
+      const pub = toPublicGtk(exactMatch);
+      res.json({ found: true, exact: true, gtk: pub, candidates: [pub] });
+      return;
+    }
+
+    const candidates = store.gtkList
+      .filter((g) => {
+        const nipDigits = String(g.nip ?? '').replace(/\D/g, '');
+        const nuptkDigits = String(g.nuptk ?? '').replace(/\D/g, '');
+        const bareName = String(g.nama ?? '').toLowerCase();
+        const fullDisplay = formatPtkDisplayName(g).toLowerCase();
+        if (digitsOnly.length >= 6) {
+          if (nipDigits.includes(digitsOnly) || nuptkDigits.includes(digitsOnly)) return true;
+        }
+        return bareName.includes(normalizedQ) || fullDisplay.includes(normalizedQ);
+      })
+      .slice(0, 6)
+      .map(toPublicGtk);
+
+    res.json({
+      found: candidates.length > 0,
+      exact: false,
+      gtk: candidates.length === 1 && digitsOnly.length >= 8 ? candidates[0] : null,
+      candidates,
+    });
+  });
+
   // Public Pemohon Routes (masked PII, no student database access)
   app.get('/api/requests/public', (_req: Request, res: Response) => {
     const store = readStore();
@@ -545,89 +648,110 @@ async function startServer() {
 
   app.get('/api/requests/track', (req: Request, res: Response) => {
     const q = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
+    const qDigits = q.replace(/\D/g, '');
     if (!q) {
       res.status(400).json({ error: 'Parameter pencarian wajib diisi.' });
       return;
     }
     const store = readStore();
     const matches = store.requests
-      .filter(
-        (item) =>
-          item.id.toLowerCase() === q ||
-          item.identityNumber.toLowerCase() === q
-      )
+      .filter((item) => {
+        if (item.id.toLowerCase() === q) return true;
+        const idNorm = item.identityNumber.trim().toLowerCase();
+        if (idNorm === q) return true;
+        if (qDigits.length >= 4 && item.identityNumber.replace(/\D/g, '') === qDigits) {
+          return true;
+        }
+        return false;
+      })
       .map(toPublicRequest);
     res.json(matches);
   });
 
   app.post('/api/requests', (req: Request, res: Response) => {
-    const store = readStore();
-    const petugasSession = verifySessionToken(req.headers.authorization);
-    if (!store.reportingPortal.isOpen && !petugasSession) {
-      res.status(403).json({
-        error: store.reportingPortal.closedMessage || 'Pelayanan pelaporan/permohonan daring sedang ditutup sementara.',
+    try {
+      const store = readStore();
+      const petugasSession = verifySessionToken(req.headers.authorization);
+      if (!store.reportingPortal.isOpen && !petugasSession) {
+        res.status(403).json({
+          error:
+            store.reportingPortal.closedMessage ||
+            'Pelayanan pelaporan/permohonan daring sedang ditutup sementara.',
+        });
+        return;
+      }
+
+      const body = req.body as Partial<ServiceRequest>;
+      if (
+        typeof body?.applicantName !== 'string' ||
+        !body.applicantName.trim() ||
+        typeof body?.identityNumber !== 'string' ||
+        !body.identityNumber.trim() ||
+        typeof body?.phone !== 'string' ||
+        !body.phone.trim() ||
+        typeof body?.purpose !== 'string' ||
+        !body.purpose.trim() ||
+        typeof body?.serviceId !== 'string' ||
+        !body.serviceId.trim() ||
+        typeof body?.serviceTitle !== 'string' ||
+        !body.serviceTitle.trim()
+      ) {
+        res.status(400).json({ error: 'Data pengajuan permohonan tidak lengkap.' });
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const maxSeq = store.requests.reduce((max, item) => {
+        const match = /^TU-\d{4}-(\d+)$/i.exec(String(item.id || '').trim());
+        const num = match ? Number(match[1]) : 0;
+        return Number.isFinite(num) && num > max ? num : max;
+      }, 0);
+      const nextNumber = maxSeq + 1;
+      const ticketId = `TU-2026-${String(nextNumber).padStart(4, '0')}`;
+
+      const newReq: ServiceRequest = {
+        id: ticketId,
+        serviceId: body.serviceId,
+        serviceTitle: body.serviceTitle.trim(),
+        applicantName: body.applicantName.trim(),
+        applicantRole: body.applicantRole || 'Siswa',
+        identityNumber: body.identityNumber.trim(),
+        classOrCohort: (body.classOrCohort || '-').trim() || '-',
+        phone: body.phone.trim(),
+        purpose: body.purpose.trim(),
+        notes: (body.notes || '').trim(),
+        submittedRequirements: Array.isArray(body.submittedRequirements)
+          ? body.submittedRequirements.filter((x): x is string => typeof x === 'string')
+          : [],
+        status: 'Diajukan',
+        assignedStaff: 'Sulistyowati, S.Pd.',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        estimatedReadyAt:
+          typeof body.estimatedReadyAt === 'string' && body.estimatedReadyAt
+            ? body.estimatedReadyAt
+            : new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+        timeline: [
+          {
+            id: `tl-${Date.now()}`,
+            timestamp: nowIso,
+            status: 'Diajukan',
+            actor: body.applicantName.trim(),
+            note: `Permohonan ${body.serviceTitle.trim()} diajukan secara daring melalui SIP TU SMAN 9 Surabaya.`,
+          },
+        ],
+      };
+
+      store.requests.unshift(newReq);
+      writeStore(store);
+
+      res.status(201).json(petugasSession ? newReq : toPublicRequest(newReq));
+    } catch (err) {
+      console.error('Failed to persist service request:', err);
+      res.status(500).json({
+        error: 'Terjadi kesalahan saat menyimpan permohonan ke sistem Tata Usaha. Silakan coba lagi.',
       });
-      return;
     }
-
-    const body = req.body as Partial<ServiceRequest>;
-    if (
-      typeof body?.applicantName !== 'string' ||
-      !body.applicantName.trim() ||
-      typeof body?.identityNumber !== 'string' ||
-      !body.identityNumber.trim() ||
-      typeof body?.phone !== 'string' ||
-      !body.phone.trim() ||
-      typeof body?.purpose !== 'string' ||
-      !body.purpose.trim() ||
-      typeof body?.serviceId !== 'string' ||
-      typeof body?.serviceTitle !== 'string'
-    ) {
-      res.status(400).json({ error: 'Data pengajuan permohonan tidak lengkap.' });
-      return;
-    }
-
-    const nowIso = new Date().toISOString();
-    const nextNumber = 153 + store.requests.length;
-    const ticketId = `TU-2026-${String(nextNumber).padStart(4, '0')}`;
-
-    const newReq: ServiceRequest = {
-      id: ticketId,
-      serviceId: body.serviceId,
-      serviceTitle: body.serviceTitle,
-      applicantName: body.applicantName.trim(),
-      applicantRole: body.applicantRole || 'Siswa',
-      identityNumber: body.identityNumber.trim(),
-      classOrCohort: (body.classOrCohort || '-').trim(),
-      phone: body.phone.trim(),
-      purpose: body.purpose.trim(),
-      notes: (body.notes || '').trim(),
-      submittedRequirements: Array.isArray(body.submittedRequirements)
-        ? body.submittedRequirements.filter((x): x is string => typeof x === 'string')
-        : [],
-      status: 'Diajukan',
-      assignedStaff: 'Sulistyowati, S.Pd.',
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      estimatedReadyAt:
-        typeof body.estimatedReadyAt === 'string'
-          ? body.estimatedReadyAt
-          : new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
-      timeline: [
-        {
-          id: `tl-${Date.now()}`,
-          timestamp: nowIso,
-          status: 'Diajukan',
-          actor: body.applicantName.trim(),
-          note: `Permohonan ${body.serviceTitle} diajukan secara daring melalui SIP TU SMAN 9 Surabaya.`,
-        },
-      ],
-    };
-
-    store.requests.unshift(newReq);
-    writeStore(store);
-
-    res.status(201).json(toPublicRequest(newReq));
   });
 
   // Protected Petugas TU Routes

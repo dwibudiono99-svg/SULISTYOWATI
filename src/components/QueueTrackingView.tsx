@@ -1,5 +1,5 @@
-import { FilePlus2, Search } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { FilePlus2, RefreshCw, Search } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { TU_SERVICE_CATALOG } from '../config/schoolConfig';
 import { RequestStatus, ServiceRequest } from '../types/tu';
 import { formatTanggalIndonesia } from '../utils/formatters';
@@ -10,6 +10,8 @@ interface QueueTrackingViewProps {
   initialSearch?: string;
   onSelectRequest: (request: ServiceRequest) => void;
   onNavigateCreate: () => void;
+  onTrackExact?: (query: string) => Promise<ServiceRequest | null>;
+  onRefresh?: () => Promise<void> | void;
 }
 
 const STATUS_FILTERS: { label: string; value: 'ALL' | RequestStatus }[] = [
@@ -28,10 +30,26 @@ export function QueueTrackingView({
   initialSearch = '',
   onSelectRequest,
   onNavigateCreate,
+  onTrackExact,
+  onRefresh,
 }: QueueTrackingViewProps) {
   const [searchQuery, setSearchQuery] = useState(initialSearch);
   const [statusFilter, setStatusFilter] = useState<'ALL' | RequestStatus>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useEffect(() => {
+    setSearchQuery(initialSearch);
+  }, [initialSearch]);
+
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (!onTrackExact || trimmed.length < 4) return;
+    const timer = window.setTimeout(() => {
+      void onTrackExact(trimmed);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery, onTrackExact]);
 
   const filteredRequests = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -83,6 +101,24 @@ export function QueueTrackingView({
               </option>
             ))}
           </select>
+
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={async () => {
+                setIsRefreshing(true);
+                try {
+                  await onRefresh();
+                } finally {
+                  setIsRefreshing(false);
+                }
+              }}
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 whitespace-nowrap"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
+              <span>Muat Ulang</span>
+            </button>
+          )}
         </div>
 
         <div className="mt-3 flex items-center gap-1 overflow-x-auto pb-1">

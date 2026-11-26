@@ -178,12 +178,29 @@ export default function App() {
     [handleLockToPemohon]
   );
 
+  const refreshCurrentRequests = useCallback(async () => {
+    if (userMode === 'petugas' && sessionToken) {
+      await loadProtectedData(sessionToken);
+    } else {
+      await loadPublicRequests();
+    }
+  }, [userMode, sessionToken, loadProtectedData, loadPublicRequests]);
+
   useEffect(() => {
     void refreshAuthStatus(null);
     void loadPublicRequests();
     void loadKopSurat();
     void loadReportingStatus();
   }, [loadKopSurat, loadPublicRequests, loadReportingStatus, refreshAuthStatus]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void refreshCurrentRequests();
+      }
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [refreshCurrentRequests]);
 
   useEffect(() => {
     if (!toastMessage) return;
@@ -208,6 +225,9 @@ export default function App() {
       return;
     }
     setActiveTab(tab);
+    if (tab === 'beranda' || tab === 'antrean' || tab === 'agenda' || tab === 'cetak') {
+      void refreshCurrentRequests();
+    }
   };
 
   const handleAuthenticated = async (token: string, staffName: string) => {
@@ -264,7 +284,7 @@ export default function App() {
     setActiveTab('ajukan');
   };
 
-  const handleSubmitNewRequest = async (newReq: ServiceRequest) => {
+  const handleSubmitNewRequest = async (newReq: ServiceRequest): Promise<boolean> => {
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
@@ -279,9 +299,10 @@ export default function App() {
           void loadReportingStatus();
         }
         setToastMessage(errBody?.error || 'Gagal mengirim permohonan layanan.');
-        return;
+        return false;
       }
       const created = (await res.json()) as ServiceRequest;
+      setRequests((prev) => [created, ...prev.filter((r) => r.id !== created.id)]);
       if (userMode === 'petugas' && sessionToken) {
         await loadProtectedData(sessionToken);
       } else {
@@ -291,9 +312,11 @@ export default function App() {
       setPrefillGtk(null);
       setInspectedRequestId(created.id);
       setActiveTab('antrean');
-      setToastMessage(`Permohonan ${created.id} berhasil diajukan ke antrean Tata Usaha.`);
+      setToastMessage(`Permohonan ${created.id} berhasil direkam & masuk ke antrean Tata Usaha.`);
+      return true;
     } catch {
       setToastMessage('Terjadi gangguan koneksi saat mengirim permohonan.');
+      return false;
     }
   };
 
@@ -304,8 +327,12 @@ export default function App() {
       const list = (await res.json()) as ServiceRequest[];
       if (list.length > 0) {
         setRequests((prev) => {
-          const exists = prev.some((r) => r.id === list[0].id);
-          return exists ? prev : [list[0], ...prev];
+          const map = new Map(prev.map((item) => [item.id, item]));
+          for (const matched of list) {
+            const existing = map.get(matched.id);
+            map.set(matched.id, existing ? { ...existing, ...matched } : matched);
+          }
+          return Array.from(map.values());
         });
         return list[0];
       }
@@ -894,6 +921,8 @@ export default function App() {
               initialSearch={queueSearchInitial}
               onSelectRequest={(req) => setInspectedRequestId(req.id)}
               onNavigateCreate={() => setActiveTab('ajukan')}
+              onTrackExact={handleTrackExact}
+              onRefresh={refreshCurrentRequests}
             />
           )}
 
