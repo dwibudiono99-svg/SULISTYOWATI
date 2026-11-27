@@ -20,6 +20,7 @@ import {
 import type { User } from 'firebase/auth';
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AcademicYearLockConfig,
   AgendaEntry,
   BackupBundlePayload,
   BackupRepositoryKey,
@@ -28,6 +29,7 @@ import {
   DapodikGtk,
   DapodikRombel,
   DapodikStudent,
+  DataMovementLogEntry,
   RepositoryStatusItem,
   ServiceRequest,
 } from '../types/tu';
@@ -77,6 +79,8 @@ interface BackupRestoreViewProps {
   students: DapodikStudent[];
   gtkList: DapodikGtk[];
   rombels: DapodikRombel[];
+  movementLogs?: DataMovementLogEntry[];
+  academicYearLock?: AcademicYearLockConfig;
   backupSettings: BackupSettingsConfig;
   repositoryStatuses: RepositoryStatusItem[];
   onRefreshStatuses: () => Promise<void>;
@@ -119,6 +123,10 @@ const REPO_LABELS: Record<BackupRepositoryKey, { title: string; subtitle: string
     title: 'Database Rombongan Belajar & Wali Kelas',
     subtitle: 'database/dapodik-rombel.json',
   },
+  movementLogs: {
+    title: 'Pelacakan Keluar Masuk Data (Siswa & GTK)',
+    subtitle: 'database/dapodik-mutasi-log.json',
+  },
 };
 
 const ALL_REPO_KEYS: BackupRepositoryKey[] = [
@@ -128,6 +136,7 @@ const ALL_REPO_KEYS: BackupRepositoryKey[] = [
   'students',
   'gtk',
   'rombels',
+  'movementLogs',
 ];
 
 interface ParsedJsonBackupPreview {
@@ -149,6 +158,7 @@ function parseBackupPreview(fileName: string, raw: unknown): ParsedJsonBackupPre
     students: 0,
     gtk: 0,
     rombels: 0,
+    movementLogs: 0,
   };
   const availableKeys: BackupRepositoryKey[] = [];
 
@@ -178,6 +188,10 @@ function parseBackupPreview(fileName: string, raw: unknown): ParsedJsonBackupPre
       counts.rombels = repos.rombels.length;
       availableKeys.push('rombels');
     }
+    if (Array.isArray(repos.movementLogs)) {
+      counts.movementLogs = repos.movementLogs.length;
+      availableKeys.push('movementLogs');
+    }
     return availableKeys.length > 0
       ? {
           fileName,
@@ -199,6 +213,7 @@ function parseBackupPreview(fileName: string, raw: unknown): ParsedJsonBackupPre
       'dapodik-siswa': 'students',
       'dapodik-gtk': 'gtk',
       'dapodik-rombel': 'rombels',
+      'dapodik-mutasi-log': 'movementLogs',
     };
     const key = repoMap[obj.repository];
     if (!key) return null;
@@ -223,6 +238,8 @@ export function BackupRestoreView({
   students,
   gtkList,
   rombels,
+  movementLogs = [],
+  academicYearLock,
   backupSettings,
   repositoryStatuses,
   onRefreshStatuses,
@@ -314,9 +331,17 @@ export function BackupRestoreView({
       students: students.length,
       gtk: gtkList.length,
       rombels: rombels.length,
+      movementLogs: movementLogs.length,
       settings: 1,
     }),
-    [requests.length, agendaEntries.length, students.length, gtkList.length, rombels.length]
+    [
+      requests.length,
+      agendaEntries.length,
+      students.length,
+      gtkList.length,
+      rombels.length,
+      movementLogs.length,
+    ]
   );
 
   const handleDownloadJsonBackup = async () => {
@@ -567,6 +592,7 @@ export function BackupRestoreView({
           students,
           gtkList,
           rombels,
+          movementLogs,
         });
         attachments.push({
           filename: buildBackupFileName(emailScopeToSend, 'xlsx'),
@@ -582,7 +608,7 @@ export function BackupRestoreView({
         '',
         `Waktu Ekspor    : ${new Date(bundle.exportedAt).toLocaleString('id-ID')}`,
         `Diekspor oleh   : ${bundle.exportedBy}`,
-        `Cakupan Backup  : ${emailScopeToSend === 'all' ? 'Seluruh Repositori (6 Modul)' : emailScopeToSend}`,
+        `Cakupan Backup  : ${emailScopeToSend === 'all' ? 'Seluruh Repositori (7 Modul)' : emailScopeToSend}`,
         '',
         'Ringkasan Jumlah Data:',
         `- Permohonan Surat Layanan : ${bundle.counts.requests} data`,
@@ -590,6 +616,7 @@ export function BackupRestoreView({
         `- Peserta Didik Dapodik    : ${bundle.counts.students} siswa`,
         `- GTK Dapodik              : ${bundle.counts.gtk} PTK`,
         `- Rombel & Wali Kelas      : ${bundle.counts.rombels} rombel`,
+        `- Log Keluar Masuk Data    : ${bundle.counts.movementLogs} riwayat`,
         `- Pengaturan Kop & Sistem  : ${bundle.counts.settings} paket konfigurasi`,
         '',
         'Berkas .json terlampir dapat dipulihkan kapan saja melalui menu Backup & Restore di Portal Petugas TU.',
@@ -722,7 +749,7 @@ export function BackupRestoreView({
           <section className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-bold text-slate-900">
-                Status 6 Database Repositori Aktif
+                Status 7 Database Repositori Aktif
               </h3>
               {backupSettings.lastBackupAt && (
                 <span className="text-xs text-slate-500">
@@ -790,13 +817,14 @@ export function BackupRestoreView({
                     className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-600 focus:outline-none"
                   >
                     <option value="all">
-                      Semua Repositori Lengkap (Permohonan, Agenda, Pengaturan, Siswa, GTK, Rombel)
+                      Semua Repositori Lengkap (Permohonan, Agenda, Pengaturan, Siswa, GTK, Rombel, Log Mutasi)
                     </option>
                     <option value="requests">Hanya Permohonan Surat Layanan TU ({requests.length})</option>
                     <option value="agenda">Hanya Buku Agenda Surat ({agendaEntries.length})</option>
                     <option value="students">Hanya Database Siswa Dapodik ({students.length})</option>
                     <option value="gtk">Hanya Database GTK Dapodik ({gtkList.length})</option>
                     <option value="rombels">Hanya Rombel & Wali Kelas ({rombels.length})</option>
+                    <option value="movementLogs">Hanya Pelacakan Keluar Masuk Data ({movementLogs.length})</option>
                     <option value="settings">Hanya Pengaturan Kop, Loket & Petugas TU</option>
                   </select>
                 </div>
@@ -1019,6 +1047,7 @@ export function BackupRestoreView({
                       students,
                       gtkList,
                       rombels,
+                      movementLogs,
                     });
                     downloadBlobFile(
                       new Blob([bytes.buffer as ArrayBuffer], {
@@ -1034,6 +1063,19 @@ export function BackupRestoreView({
                 </button>
               </div>
             </div>
+
+            {academicYearLock && (academicYearLock.studentsLocked || academicYearLock.gtkLocked) && (
+              <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-3.5 py-2.5 text-xs text-blue-900">
+                <span className="font-semibold">
+                  Penguncian TP {academicYearLock.tahunPelajaran} Aktif:
+                </span>{' '}
+                Data impor Siswa &amp; GTK otomatis dikunci ke Database Tahun Pelajaran{' '}
+                {academicYearLock.tahunPelajaran} serta terekam pada Pelacakan Keluar Masuk Data. Mode
+                impor <span className="font-mono font-semibold">Replace</span> ditolak untuk database
+                yang sedang dikunci; gunakan <span className="font-semibold">Upsert</span> atau{' '}
+                <span className="font-semibold">Append</span>.
+              </div>
+            )}
 
             {quickImportError && (
               <div className="mt-4 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs text-rose-800">
@@ -1378,6 +1420,7 @@ export function BackupRestoreView({
                     <option value="students">Siswa Dapodik</option>
                     <option value="gtk">GTK Dapodik</option>
                     <option value="rombels">Rombel & Wali Kelas</option>
+                    <option value="movementLogs">Pelacakan Keluar Masuk Data</option>
                     <option value="settings">Pengaturan & Kop</option>
                   </select>
                 </div>
@@ -1528,12 +1571,15 @@ export function BackupRestoreView({
                     onChange={(e) => setEmailScopeToSend(e.target.value as BackupScopeKey)}
                     className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900"
                   >
-                    <option value="all">Semua Repositori (Permohonan, Agenda, Siswa, GTK, Rombel, Pengaturan)</option>
+                    <option value="all">
+                      Semua Repositori (Permohonan, Agenda, Siswa, GTK, Rombel, Log Mutasi, Pengaturan)
+                    </option>
                     <option value="requests">Permohonan Surat Layanan TU</option>
                     <option value="agenda">Buku Agenda Surat</option>
                     <option value="students">Database Siswa Dapodik</option>
                     <option value="gtk">Database GTK Dapodik</option>
                     <option value="rombels">Rombel & Wali Kelas</option>
+                    <option value="movementLogs">Pelacakan Keluar Masuk Data</option>
                     <option value="settings">Pengaturan & Kop Surat</option>
                   </select>
                 </div>

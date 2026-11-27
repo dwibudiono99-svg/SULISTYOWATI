@@ -3,10 +3,13 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import {
+  appendMovementLogs,
   buildBackupBundle,
   type ClaimedTokenRecord,
+  CURRENT_ACADEMIC_YEAR,
   type DeduplicateRepoTarget,
   deduplicateRepository,
+  DEFAULT_ACADEMIC_YEAR_LOCK,
   DEFAULT_BACKUP_SETTINGS,
   DEFAULT_KOP_SURAT,
   DEFAULT_REPORTING_PORTAL,
@@ -18,15 +21,19 @@ import {
   readAgendaRepository,
   readClaimedToken,
   readGtkRepository,
+  readMovementLogsRepository,
   readRequestsRepository,
   readRombelsRepository,
   readSettingsRepository,
   readStudentsRepository,
   restoreBackupBundle,
+  sanitizeAcademicYearLock,
   sanitizeBackupSettings,
   sanitizeKopSurat,
   sanitizeReportingPortal,
   sanitizeTuStaffConfig,
+  stampGtkAcademicYear,
+  stampStudentAcademicYear,
   toPublicTuStaffInfo,
   writeAgendaRepository,
   writeClaimedToken,
@@ -37,6 +44,7 @@ import {
   writeStudentsRepository,
 } from './server/repositoryStore.ts';
 import type {
+  AcademicYearLockConfig,
   AgendaEntry,
   BackupRepositoryKey,
   BackupScopeKey,
@@ -44,6 +52,7 @@ import type {
   DapodikGtk,
   DapodikRombel,
   DapodikStudent,
+  DataMovementLogEntry,
   ReportingPortalConfig,
   RequestParticipant,
   ServiceRequest,
@@ -762,14 +771,42 @@ async function startServer() {
       return;
     }
 
+    const nowIso = new Date().toISOString();
+    const settings = readSettingsRepository();
+    const lock = settings.academicYearLock;
+    const actorName = resolveActiveStaffName(settings.tuStaff);
     const students = readStudentsRepository();
-    const record: DapodikStudent = {
-      ...student,
-      id: student.id?.trim() || `pd-${Date.now()}`,
-      vervalPdSyncAt: new Date().toISOString(),
-    };
+    const record: DapodikStudent = stampStudentAcademicYear(
+      {
+        ...student,
+        id: student.id?.trim() || `pd-${Date.now()}`,
+        vervalPdSyncAt: nowIso,
+      },
+      lock.tahunPelajaran,
+      lock.studentsLocked,
+      actorName,
+      nowIso
+    );
     students.unshift(record);
     writeStudentsRepository(students);
+
+    appendMovementLogs([
+      {
+        timestamp: nowIso,
+        domain: 'siswa',
+        direction: record.statusSiswa === 'Aktif' ? 'MASUK' : 'PERUBAHAN',
+        source: 'input-manual',
+        tahunPelajaran: record.tahunPelajaran || lock.tahunPelajaran,
+        recordId: record.id,
+        nama: record.nama,
+        identityNumber: record.nisn || record.nipd || record.nik || '-',
+        unitOrRole: record.rombelSaatIni || '-',
+        statusLabel: record.statusSiswa || 'Aktif',
+        note: `Peserta didik ditambahkan secara manual ke Database TP ${record.tahunPelajaran || lock.tahunPelajaran}.`,
+        actor: actorName,
+      },
+    ]);
+
     res.status(201).json(record);
   });
 
@@ -782,20 +819,101 @@ async function startServer() {
       res.status(404).json({ error: 'Data siswa tidak ditemukan.' });
       return;
     }
-    const updated: DapodikStudent = {
-      ...incoming,
-      id,
-      vervalPdSyncAt: new Date().toISOString(),
-    };
+
+    const previous = students[idx];
+    const nowIso = new Date().toISOString();
+    const settings = readSettingsRepository();
+    const lock = settings.academicYearLock;
+    const actorName = resolveActiveStaffName(settings.tuStaff);
+
+    const updated: DapodikStudent = stampStudentAcademicYear(
+      {
+        ...incoming,
+        id,
+        vervalPdSyncAt: nowIso,
+      },
+      previous.tahunPelajaran || lock.tahunPelajaran,
+      lock.studentsLocked,
+      actorName,
+      nowIso
+    );
     students[idx] = updated;
     writeStudentsRepository(students);
+
+    const wasActive = previous.statusSiswa === 'Aktif';
+    const isNowActive = updated.statusSiswa === 'Aktif';
+    let direction: DataMovementLogEntry['direction'] = 'PERUBAHAN';
+    let source: DataMovementLogEntry['source'] = 'edit-data';
+    let note = 'Pembaruan biodata peserta didik.';
+
+    if (wasActive && !isNowActive) {
+      direction = 'KELUAR';
+      source = 'perubahan-status';
+      note = `Status peserta didik berubah dari Aktif menjadi ${updated.statusSiswa}.`;
+    } else if (!wasActive && isNowActive) {
+      direction = 'MASUK';
+      source = 'perubahan-status';
+      note = `Status peserta didik diaktifkan kembali dari ${previous.statusSiswa} menjadi Aktif.`;
+    } else if (previous.rombelSaatIni !== updated.rombelSaatIni) {
+      note = `Perubahan rombel: ${previous.rombelSaatIni || '-'} → ${updated.rombelSaatIni || '-'}.`;
+    } else if (previous.statusSiswa !== updated.statusSiswa) {
+      source = 'perubahan-status';
+      note = `Perubahan status: ${previous.statusSiswa} → ${updated.statusSiswa}.`;
+    }
+
+    appendMovementLogs([
+      {
+        timestamp: nowIso,
+        domain: 'siswa',
+        direction,
+        source,
+        tahunPelajaran: updated.tahunPelajaran || lock.tahunPelajaran,
+        recordId: updated.id,
+        nama: updated.nama,
+        identityNumber: updated.nisn || updated.nipd || updated.nik || '-',
+        unitOrRole: updated.rombelSaatIni || '-',
+        statusLabel: updated.statusSiswa || 'Aktif',
+        note,
+        actor: actorName,
+      },
+    ]);
+
     res.json(updated);
   });
 
   app.delete('/api/students/:id', requirePetugasAuth, (req: Request, res: Response) => {
     const { id } = req.params;
     const students = readStudentsRepository();
+    const target = students.find((s) => s.id === id);
+    if (!target) {
+      res.status(404).json({ error: 'Data siswa tidak ditemukan.' });
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const settings = readSettingsRepository();
+    const lock = settings.academicYearLock;
+    const actorName = resolveActiveStaffName(settings.tuStaff);
+
     writeStudentsRepository(students.filter((s) => s.id !== id));
+
+    appendMovementLogs([
+      {
+        timestamp: nowIso,
+        domain: 'siswa',
+        direction: 'KELUAR',
+        source: 'hapus-data',
+        tahunPelajaran: target.tahunPelajaran || lock.tahunPelajaran,
+        recordId: target.id,
+        nama: target.nama,
+        identityNumber: target.nisn || target.nipd || target.nik || '-',
+        unitOrRole: target.rombelSaatIni || '-',
+        statusLabel: target.statusSiswa || 'Dihapus',
+        note: `Data peserta didik dihapus dari Database TP ${target.tahunPelajaran || lock.tahunPelajaran}.`,
+        actor: actorName,
+      },
+    ]);
+
     res.json({ ok: true });
   });
 
@@ -809,25 +927,97 @@ async function startServer() {
       return;
     }
 
+    const settings = readSettingsRepository();
+    const lock = settings.academicYearLock;
+    const actorName = resolveActiveStaffName(settings.tuStaff);
+    const tp = lock.tahunPelajaran || CURRENT_ACADEMIC_YEAR;
+
+    if (mode === 'replace' && lock.studentsLocked) {
+      res.status(409).json({
+        error: `Database Peserta Didik dikunci untuk Tahun Pelajaran ${tp}. Gunakan mode "Gabung & Perbarui" atau "Tambahkan Semua Baru" agar data terkunci tetap terjaga dan keluar-masuk data terlacak.`,
+      });
+      return;
+    }
+
     const nowIso = new Date().toISOString();
     const sanitizedIncoming = incomingList
       .filter((s): s is DapodikStudent => Boolean(s && typeof s.nama === 'string' && s.nama.trim()))
-      .map((s, idx) => ({
-        ...s,
-        id: s.id?.trim() || `pd-imp-${Date.now()}-${idx}`,
-        vervalPdSyncAt: s.vervalPdSyncAt || nowIso,
-      }));
+      .map((s, idx) =>
+        stampStudentAcademicYear(
+          {
+            ...s,
+            id: s.id?.trim() || `pd-imp-${Date.now()}-${idx}`,
+            vervalPdSyncAt: s.vervalPdSyncAt || nowIso,
+          },
+          tp,
+          true,
+          actorName,
+          nowIso
+        )
+      );
 
     let students = readStudentsRepository();
     let addedCount = 0;
     let updatedCount = 0;
+    const newMovementEntries: Array<Omit<DataMovementLogEntry, 'id'>> = [];
 
     if (mode === 'replace') {
+      const incomingIds = new Set(sanitizedIncoming.map((s) => s.id));
+      for (const old of students) {
+        if (!incomingIds.has(old.id)) {
+          newMovementEntries.push({
+            timestamp: nowIso,
+            domain: 'siswa',
+            direction: 'KELUAR',
+            source: 'impor-excel',
+            tahunPelajaran: old.tahunPelajaran || tp,
+            recordId: old.id,
+            nama: old.nama,
+            identityNumber: old.nisn || old.nipd || old.nik || '-',
+            unitOrRole: old.rombelSaatIni || '-',
+            statusLabel: old.statusSiswa || '-',
+            note: `Keluar karena penggantian penuh saat impor TP ${tp}.`,
+            actor: actorName,
+          });
+        }
+      }
+      for (const inc of sanitizedIncoming) {
+        newMovementEntries.push({
+          timestamp: nowIso,
+          domain: 'siswa',
+          direction: 'MASUK',
+          source: 'impor-excel',
+          tahunPelajaran: tp,
+          recordId: inc.id,
+          nama: inc.nama,
+          identityNumber: inc.nisn || inc.nipd || inc.nik || '-',
+          unitOrRole: inc.rombelSaatIni || '-',
+          statusLabel: inc.statusSiswa || 'Aktif',
+          note: `Masuk dan dikunci ke Database Peserta Didik TP ${tp}.`,
+          actor: actorName,
+        });
+      }
       students = sanitizedIncoming;
       addedCount = sanitizedIncoming.length;
     } else if (mode === 'append') {
       students = [...sanitizedIncoming, ...students];
       addedCount = sanitizedIncoming.length;
+      for (const inc of sanitizedIncoming) {
+        newMovementEntries.push({
+          timestamp: nowIso,
+          domain: 'siswa',
+          direction: 'MASUK',
+          source: 'impor-excel',
+          tahunPelajaran: tp,
+          recordId: inc.id,
+          nama: inc.nama,
+          identityNumber: inc.nisn || inc.nipd || inc.nik || '-',
+          unitOrRole: inc.rombelSaatIni || '-',
+          statusLabel: inc.statusSiswa || 'Aktif',
+          note: `Masuk melalui impor data (mode tambah baru) & dikunci ke TP ${tp}.`,
+          actor: actorName,
+        });
+      }
     } else {
       for (const incoming of sanitizedIncoming) {
         const matchIdx = students.findIndex(
@@ -836,26 +1026,89 @@ async function startServer() {
             (incoming.nipd && existing.nipd === incoming.nipd)
         );
         if (matchIdx >= 0) {
-          students[matchIdx] = {
-            ...students[matchIdx],
-            ...incoming,
-            id: students[matchIdx].id,
-            vervalPdSyncAt: nowIso,
-          };
+          const prev = students[matchIdx];
+          const updatedRecord = stampStudentAcademicYear(
+            {
+              ...prev,
+              ...incoming,
+              id: prev.id,
+              vervalPdSyncAt: nowIso,
+            },
+            tp,
+            true,
+            actorName,
+            nowIso
+          );
+          students[matchIdx] = updatedRecord;
           updatedCount++;
+
+          const wasActive = prev.statusSiswa === 'Aktif';
+          const isNowActive = updatedRecord.statusSiswa === 'Aktif';
+          const direction: DataMovementLogEntry['direction'] =
+            wasActive && !isNowActive ? 'KELUAR' : !wasActive && isNowActive ? 'MASUK' : 'PERUBAHAN';
+          const rombelNote =
+            prev.rombelSaatIni !== updatedRecord.rombelSaatIni
+              ? ` Rombel: ${prev.rombelSaatIni || '-'} → ${updatedRecord.rombelSaatIni || '-'}.`
+              : '';
+          newMovementEntries.push({
+            timestamp: nowIso,
+            domain: 'siswa',
+            direction,
+            source: 'impor-excel',
+            tahunPelajaran: tp,
+            recordId: updatedRecord.id,
+            nama: updatedRecord.nama,
+            identityNumber: updatedRecord.nisn || updatedRecord.nipd || updatedRecord.nik || '-',
+            unitOrRole: updatedRecord.rombelSaatIni || '-',
+            statusLabel: updatedRecord.statusSiswa || 'Aktif',
+            note: `Pembaruan data hasil impor TP ${tp}.${rombelNote}`,
+            actor: actorName,
+          });
         } else {
           students.unshift(incoming);
           addedCount++;
+          newMovementEntries.push({
+            timestamp: nowIso,
+            domain: 'siswa',
+            direction: 'MASUK',
+            source: 'impor-excel',
+            tahunPelajaran: tp,
+            recordId: incoming.id,
+            nama: incoming.nama,
+            identityNumber: incoming.nisn || incoming.nipd || incoming.nik || '-',
+            unitOrRole: incoming.rombelSaatIni || '-',
+            statusLabel: incoming.statusSiswa || 'Aktif',
+            note: `Peserta didik baru masuk dari impor & dikunci ke TP ${tp}.`,
+            actor: actorName,
+          });
         }
       }
     }
 
+    const nextLock: AcademicYearLockConfig = {
+      ...lock,
+      tahunPelajaran: tp,
+      studentsLocked: true,
+      studentsLockedAt: nowIso,
+      studentsLockedBy: actorName,
+      updatedAt: nowIso,
+      updatedBy: actorName,
+    };
+    writeSettingsRepository({
+      ...settings,
+      academicYearLock: nextLock,
+    });
+
     const envelope = writeStudentsRepository(students);
+    const movementLogs = appendMovementLogs(newMovementEntries);
+
     res.json({
       students: envelope.data,
       addedCount,
       updatedCount,
       repositoryUpdatedAt: envelope.updatedAt,
+      academicYearLock: nextLock,
+      movementLogs,
     });
   });
 
@@ -1004,14 +1257,42 @@ async function startServer() {
       res.status(400).json({ error: 'Format foto PTK tidak valid atau melebihi batas ukuran.' });
       return;
     }
+    const nowIso = new Date().toISOString();
+    const settings = readSettingsRepository();
+    const lock = settings.academicYearLock;
+    const actorName = resolveActiveStaffName(settings.tuStaff);
     const gtkList = readGtkRepository();
-    const checked = applyDispendukcapilCheck({
-      ...incoming,
-      fotoDataUrl: incoming.fotoDataUrl ?? '',
-      id: incoming.id?.trim() || `gtk-${Date.now()}`,
-    });
+    const checked = stampGtkAcademicYear(
+      applyDispendukcapilCheck({
+        ...incoming,
+        fotoDataUrl: incoming.fotoDataUrl ?? '',
+        id: incoming.id?.trim() || `gtk-${Date.now()}`,
+      }),
+      lock.tahunPelajaran,
+      lock.gtkLocked,
+      actorName,
+      nowIso
+    );
     gtkList.unshift(checked);
     writeGtkRepository(gtkList);
+
+    appendMovementLogs([
+      {
+        timestamp: nowIso,
+        domain: 'gtk',
+        direction: 'MASUK',
+        source: 'input-manual',
+        tahunPelajaran: checked.tahunPelajaran || lock.tahunPelajaran,
+        recordId: checked.id,
+        nama: formatPtkDisplayName(checked),
+        identityNumber: checked.nip || checked.nuptk || checked.nik || '-',
+        unitOrRole: checked.jabatanPtk || checked.jenisPtk || '-',
+        statusLabel: checked.statusKepegawaian || 'Aktif',
+        note: `Data GTK ditambahkan secara manual ke Database GTK TP ${checked.tahunPelajaran || lock.tahunPelajaran}.`,
+        actor: actorName,
+      },
+    ]);
+
     res.status(201).json(checked);
   });
 
@@ -1028,22 +1309,89 @@ async function startServer() {
       res.status(404).json({ error: 'Data PTK tidak ditemukan.' });
       return;
     }
-    const checked = applyDispendukcapilCheck({
-      ...incoming,
-      fotoDataUrl: incoming.fotoDataUrl ?? '',
-      id,
-    });
+    const previous = gtkList[idx];
+    const nowIso = new Date().toISOString();
+    const settings = readSettingsRepository();
+    const lock = settings.academicYearLock;
+    const actorName = resolveActiveStaffName(settings.tuStaff);
+
+    const checked = stampGtkAcademicYear(
+      applyDispendukcapilCheck({
+        ...incoming,
+        fotoDataUrl: incoming.fotoDataUrl ?? '',
+        id,
+      }),
+      previous.tahunPelajaran || lock.tahunPelajaran,
+      lock.gtkLocked,
+      actorName,
+      nowIso
+    );
     gtkList[idx] = checked;
     writeGtkRepository(gtkList);
+
+    const changes: string[] = [];
+    if (previous.statusKepegawaian !== checked.statusKepegawaian) {
+      changes.push(`Kepegawaian: ${previous.statusKepegawaian} → ${checked.statusKepegawaian}`);
+    }
+    if ((previous.jabatanPtk || previous.jenisPtk) !== (checked.jabatanPtk || checked.jenisPtk)) {
+      changes.push(
+        `Jabatan: ${previous.jabatanPtk || previous.jenisPtk} → ${checked.jabatanPtk || checked.jenisPtk}`
+      );
+    }
+
+    appendMovementLogs([
+      {
+        timestamp: nowIso,
+        domain: 'gtk',
+        direction: 'PERUBAHAN',
+        source: 'edit-data',
+        tahunPelajaran: checked.tahunPelajaran || lock.tahunPelajaran,
+        recordId: checked.id,
+        nama: formatPtkDisplayName(checked),
+        identityNumber: checked.nip || checked.nuptk || checked.nik || '-',
+        unitOrRole: checked.jabatanPtk || checked.jenisPtk || '-',
+        statusLabel: checked.statusKepegawaian || '-',
+        note: changes.length > 0 ? changes.join('; ') : 'Pembaruan profil & data kepegawaian GTK.',
+        actor: actorName,
+      },
+    ]);
+
     res.json(checked);
   });
 
   app.delete('/api/gtk/:id', requirePetugasAuth, (req: Request, res: Response) => {
     const { id } = req.params;
-    const gtkList = readGtkRepository().filter((g) => g.id !== id);
+    const allGtk = readGtkRepository();
+    const target = allGtk.find((g) => g.id === id);
+    if (!target) {
+      res.status(404).json({ error: 'Data PTK tidak ditemukan.' });
+      return;
+    }
+    const gtkList = allGtk.filter((g) => g.id !== id);
     writeGtkRepository(gtkList);
 
+    const nowIso = new Date().toISOString();
     const settings = readSettingsRepository();
+    const lock = settings.academicYearLock;
+    const actorName = resolveActiveStaffName(settings.tuStaff);
+
+    appendMovementLogs([
+      {
+        timestamp: nowIso,
+        domain: 'gtk',
+        direction: 'KELUAR',
+        source: 'hapus-data',
+        tahunPelajaran: target.tahunPelajaran || lock.tahunPelajaran,
+        recordId: target.id,
+        nama: formatPtkDisplayName(target),
+        identityNumber: target.nip || target.nuptk || target.nik || '-',
+        unitOrRole: target.jabatanPtk || target.jenisPtk || '-',
+        statusLabel: target.statusKepegawaian || 'Dihapus',
+        note: `Data GTK dihapus dari Database GTK TP ${target.tahunPelajaran || lock.tahunPelajaran}.`,
+        actor: actorName,
+      },
+    ]);
+
     const hadOperator = settings.tuStaff.operators.some((op) => op.gtkId === id);
     const wasActive = settings.tuStaff.activeGtkId === id;
     if (hadOperator || wasActive) {
@@ -1059,7 +1407,7 @@ async function startServer() {
             wasActive && !nextFallbackOp
               ? 'Pegawai TU aktif dihapus dari Database GTK Dapodik.'
               : settings.tuStaff.deactivatedReason,
-          updatedAt: new Date().toISOString(),
+          updatedAt: nowIso,
         },
         gtkList,
         DEFAULT_TU_STAFF
@@ -1079,25 +1427,98 @@ async function startServer() {
       res.status(400).json({ error: 'Daftar data GTK tidak valid.' });
       return;
     }
+
+    const settings = readSettingsRepository();
+    const lock = settings.academicYearLock;
+    const actorName = resolveActiveStaffName(settings.tuStaff);
+    const tp = lock.tahunPelajaran || CURRENT_ACADEMIC_YEAR;
+
+    if (mode === 'replace' && lock.gtkLocked) {
+      res.status(409).json({
+        error: `Database GTK dikunci untuk Tahun Pelajaran ${tp}. Gunakan mode "Gabung & Perbarui" atau "Tambahkan Semua Baru" agar data terkunci tetap terjaga dan keluar-masuk data terlacak.`,
+      });
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
     let gtkList = readGtkRepository();
     let addedCount = 0;
     let updatedCount = 0;
+    const newMovementEntries: Array<Omit<DataMovementLogEntry, 'id'>> = [];
+
     const checkedIncoming = incomingList
       .filter((g): g is DapodikGtk => Boolean(g && typeof g.nama === 'string' && g.nama.trim()))
       .map((g, idx) =>
-        applyDispendukcapilCheck({
-          ...g,
-          fotoDataUrl: isSafeRasterImageDataUrl(g.fotoDataUrl ?? '') ? (g.fotoDataUrl ?? '') : '',
-          id: g.id || `gtk-imp-${Date.now()}-${idx}`,
-        })
+        stampGtkAcademicYear(
+          applyDispendukcapilCheck({
+            ...g,
+            fotoDataUrl: isSafeRasterImageDataUrl(g.fotoDataUrl ?? '') ? (g.fotoDataUrl ?? '') : '',
+            id: g.id || `gtk-imp-${Date.now()}-${idx}`,
+          }),
+          tp,
+          true,
+          actorName,
+          nowIso
+        )
       );
 
     if (mode === 'replace') {
+      const incomingIds = new Set(checkedIncoming.map((g) => g.id));
+      for (const old of gtkList) {
+        if (!incomingIds.has(old.id)) {
+          newMovementEntries.push({
+            timestamp: nowIso,
+            domain: 'gtk',
+            direction: 'KELUAR',
+            source: 'impor-excel',
+            tahunPelajaran: old.tahunPelajaran || tp,
+            recordId: old.id,
+            nama: formatPtkDisplayName(old),
+            identityNumber: old.nip || old.nuptk || old.nik || '-',
+            unitOrRole: old.jabatanPtk || old.jenisPtk || '-',
+            statusLabel: old.statusKepegawaian || '-',
+            note: `Keluar karena penggantian penuh saat impor GTK TP ${tp}.`,
+            actor: actorName,
+          });
+        }
+      }
+      for (const inc of checkedIncoming) {
+        newMovementEntries.push({
+          timestamp: nowIso,
+          domain: 'gtk',
+          direction: 'MASUK',
+          source: 'impor-excel',
+          tahunPelajaran: tp,
+          recordId: inc.id,
+          nama: formatPtkDisplayName(inc),
+          identityNumber: inc.nip || inc.nuptk || inc.nik || '-',
+          unitOrRole: inc.jabatanPtk || inc.jenisPtk || '-',
+          statusLabel: inc.statusKepegawaian || '-',
+          note: `Masuk dan dikunci ke Database GTK TP ${tp}.`,
+          actor: actorName,
+        });
+      }
       gtkList = checkedIncoming;
       addedCount = checkedIncoming.length;
     } else if (mode === 'append') {
       gtkList = [...checkedIncoming, ...gtkList];
       addedCount = checkedIncoming.length;
+      for (const inc of checkedIncoming) {
+        newMovementEntries.push({
+          timestamp: nowIso,
+          domain: 'gtk',
+          direction: 'MASUK',
+          source: 'impor-excel',
+          tahunPelajaran: tp,
+          recordId: inc.id,
+          nama: formatPtkDisplayName(inc),
+          identityNumber: inc.nip || inc.nuptk || inc.nik || '-',
+          unitOrRole: inc.jabatanPtk || inc.jenisPtk || '-',
+          statusLabel: inc.statusKepegawaian || '-',
+          note: `Masuk melalui impor GTK (mode tambah baru) & dikunci ke TP ${tp}.`,
+          actor: actorName,
+        });
+      }
     } else {
       for (const incoming of checkedIncoming) {
         const matchIdx = gtkList.findIndex(
@@ -1107,26 +1528,80 @@ async function startServer() {
             (incoming.nuptk && existing.nuptk === incoming.nuptk)
         );
         if (matchIdx >= 0) {
-          gtkList[matchIdx] = applyDispendukcapilCheck({
-            ...gtkList[matchIdx],
-            ...incoming,
-            fotoDataUrl: incoming.fotoDataUrl || gtkList[matchIdx].fotoDataUrl || '',
-            id: gtkList[matchIdx].id,
-          });
+          const prev = gtkList[matchIdx];
+          const updatedRecord = stampGtkAcademicYear(
+            applyDispendukcapilCheck({
+              ...prev,
+              ...incoming,
+              fotoDataUrl: incoming.fotoDataUrl || prev.fotoDataUrl || '',
+              id: prev.id,
+            }),
+            tp,
+            true,
+            actorName,
+            nowIso
+          );
+          gtkList[matchIdx] = updatedRecord;
           updatedCount++;
+          newMovementEntries.push({
+            timestamp: nowIso,
+            domain: 'gtk',
+            direction: 'PERUBAHAN',
+            source: 'impor-excel',
+            tahunPelajaran: tp,
+            recordId: updatedRecord.id,
+            nama: formatPtkDisplayName(updatedRecord),
+            identityNumber: updatedRecord.nip || updatedRecord.nuptk || updatedRecord.nik || '-',
+            unitOrRole: updatedRecord.jabatanPtk || updatedRecord.jenisPtk || '-',
+            statusLabel: updatedRecord.statusKepegawaian || '-',
+            note: `Pembaruan data GTK hasil impor TP ${tp}.`,
+            actor: actorName,
+          });
         } else {
           gtkList.unshift(incoming);
           addedCount++;
+          newMovementEntries.push({
+            timestamp: nowIso,
+            domain: 'gtk',
+            direction: 'MASUK',
+            source: 'impor-excel',
+            tahunPelajaran: tp,
+            recordId: incoming.id,
+            nama: formatPtkDisplayName(incoming),
+            identityNumber: incoming.nip || incoming.nuptk || incoming.nik || '-',
+            unitOrRole: incoming.jabatanPtk || incoming.jenisPtk || '-',
+            statusLabel: incoming.statusKepegawaian || '-',
+            note: `GTK baru masuk dari impor & dikunci ke TP ${tp}.`,
+            actor: actorName,
+          });
         }
       }
     }
 
+    const nextLock: AcademicYearLockConfig = {
+      ...lock,
+      tahunPelajaran: tp,
+      gtkLocked: true,
+      gtkLockedAt: nowIso,
+      gtkLockedBy: actorName,
+      updatedAt: nowIso,
+      updatedBy: actorName,
+    };
+    writeSettingsRepository({
+      ...settings,
+      academicYearLock: nextLock,
+    });
+
     const envelope = writeGtkRepository(gtkList);
+    const movementLogs = appendMovementLogs(newMovementEntries);
+
     res.json({
       gtkList: envelope.data,
       addedCount,
       updatedCount,
       repositoryUpdatedAt: envelope.updatedAt,
+      academicYearLock: nextLock,
+      movementLogs,
     });
   });
 
@@ -1326,6 +1801,76 @@ async function startServer() {
     res.json(config);
   });
 
+  // Protected Academic Year Database Lock & Movement Logs Routes
+  app.get('/api/academic-year-lock', requirePetugasAuth, (_req: Request, res: Response) => {
+    res.json(readSettingsRepository().academicYearLock);
+  });
+
+  app.put('/api/academic-year-lock', requirePetugasAuth, (req: Request, res: Response) => {
+    const current = readSettingsRepository();
+    const actorName = resolveActiveStaffName(current.tuStaff);
+    const nowIso = new Date().toISOString();
+    const body = req.body as Partial<AcademicYearLockConfig>;
+    if (!body || typeof body !== 'object') {
+      res.status(400).json({ error: 'Payload pengaturan penguncian database tidak valid.' });
+      return;
+    }
+
+    const nextStudentsLocked =
+      typeof body.studentsLocked === 'boolean'
+        ? body.studentsLocked
+        : current.academicYearLock.studentsLocked;
+    const nextGtkLocked =
+      typeof body.gtkLocked === 'boolean' ? body.gtkLocked : current.academicYearLock.gtkLocked;
+
+    const nextLock = sanitizeAcademicYearLock(
+      {
+        ...current.academicYearLock,
+        ...body,
+        studentsLocked: nextStudentsLocked,
+        studentsLockedAt: nextStudentsLocked ? nowIso : current.academicYearLock.studentsLockedAt,
+        studentsLockedBy: nextStudentsLocked ? actorName : current.academicYearLock.studentsLockedBy,
+        gtkLocked: nextGtkLocked,
+        gtkLockedAt: nextGtkLocked ? nowIso : current.academicYearLock.gtkLockedAt,
+        gtkLockedBy: nextGtkLocked ? actorName : current.academicYearLock.gtkLockedBy,
+        updatedAt: nowIso,
+        updatedBy: actorName,
+      },
+      DEFAULT_ACADEMIC_YEAR_LOCK
+    );
+
+    writeSettingsRepository({
+      ...current,
+      academicYearLock: nextLock,
+    });
+
+    const updatedStudents = readStudentsRepository().map((s) =>
+      stampStudentAcademicYear(s, nextLock.tahunPelajaran, nextLock.studentsLocked, actorName, nowIso)
+    );
+    writeStudentsRepository(updatedStudents);
+
+    const updatedGtk = readGtkRepository().map((g) =>
+      stampGtkAcademicYear(g, nextLock.tahunPelajaran, nextLock.gtkLocked, actorName, nowIso)
+    );
+    writeGtkRepository(updatedGtk);
+
+    res.json({
+      academicYearLock: nextLock,
+      students: updatedStudents,
+      gtkList: updatedGtk,
+    });
+  });
+
+  app.get('/api/movement-logs', requirePetugasAuth, (req: Request, res: Response) => {
+    const domain = typeof req.query.domain === 'string' ? req.query.domain.trim() : '';
+    const logs = readMovementLogsRepository();
+    if (domain === 'siswa' || domain === 'gtk') {
+      res.json(logs.filter((item) => item.domain === domain));
+      return;
+    }
+    res.json(logs);
+  });
+
   app.get('/api/backup/export', requirePetugasAuth, (req: Request, res: Response) => {
     const rawScope = typeof req.query.scope === 'string' ? req.query.scope.trim() : 'all';
     const validScopes: BackupScopeKey[] = [
@@ -1336,6 +1881,7 @@ async function startServer() {
       'students',
       'gtk',
       'rombels',
+      'movementLogs',
     ];
     const scope: BackupScopeKey = validScopes.includes(rawScope as BackupScopeKey)
       ? (rawScope as BackupScopeKey)
@@ -1374,6 +1920,7 @@ async function startServer() {
       'students',
       'gtk',
       'rombels',
+      'movementLogs',
     ];
     const cleanSelected = Array.isArray(selectedRepos)
       ? selectedRepos.filter((k): k is BackupRepositoryKey => allowedRepos.includes(k))
@@ -1404,10 +1951,12 @@ async function startServer() {
         students: readStudentsRepository(),
         gtkList: readGtkRepository(),
         rombels: readRombelsRepository(),
+        movementLogs: readMovementLogsRepository(),
         kopSurat: nextSettings.kopSurat,
         reportingPortal: nextSettings.reportingPortal,
         tuStaff: nextSettings.tuStaff,
         backupSettings: nextSettings.backup,
+        academicYearLock: nextSettings.academicYearLock,
       },
     });
   });
@@ -1457,7 +2006,8 @@ async function startServer() {
       return;
     }
 
-    const result = deduplicateRepository(target as DeduplicateRepoTarget, cleanIds);
+    const actorName = resolveActiveStaffName(readSettingsRepository().tuStaff);
+    const result = deduplicateRepository(target as DeduplicateRepoTarget, cleanIds, actorName);
     res.json({
       target,
       ...result,

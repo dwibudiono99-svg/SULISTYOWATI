@@ -18,6 +18,7 @@ import { Sidebar } from './components/Sidebar';
 import { SubmitRequestView } from './components/SubmitRequestView';
 import { TuStaffSettingsModal } from './components/TuStaffSettingsModal';
 import {
+  DEFAULT_ACADEMIC_YEAR_LOCK_CONFIG,
   DEFAULT_BACKUP_SETTINGS_CONFIG,
   DEFAULT_KOP_SURAT_CONFIG,
   DEFAULT_REPORTING_PORTAL_CONFIG,
@@ -25,6 +26,7 @@ import {
   SCHOOL_INFO,
 } from './config/schoolConfig';
 import {
+  AcademicYearLockConfig,
   AgendaEntry,
   BackupBundlePayload,
   BackupRepositoryKey,
@@ -33,6 +35,7 @@ import {
   DapodikGtk,
   DapodikRombel,
   DapodikStudent,
+  DataMovementLogEntry,
   KopSuratConfig,
   PublicTuStaffInfo,
   ReportingPortalConfig,
@@ -82,6 +85,10 @@ export default function App() {
   const [backupSettings, setBackupSettings] = useState<BackupSettingsConfig>(
     DEFAULT_BACKUP_SETTINGS_CONFIG
   );
+  const [academicYearLock, setAcademicYearLock] = useState<AcademicYearLockConfig>(
+    DEFAULT_ACADEMIC_YEAR_LOCK_CONFIG
+  );
+  const [movementLogs, setMovementLogs] = useState<DataMovementLogEntry[]>([]);
   const [repositoryStatuses, setRepositoryStatuses] = useState<RepositoryStatusItem[]>([]);
 
   const [selectedServiceId, setSelectedServiceId] = useState<ServiceCategoryId>('surat-aktif');
@@ -174,7 +181,9 @@ export default function App() {
       setGtkList([]);
       setRombels([]);
       setAgendaEntries([]);
+      setMovementLogs([]);
       setRepositoryStatuses([]);
+      setAcademicYearLock(DEFAULT_ACADEMIC_YEAR_LOCK_CONFIG);
       setBackupSettings(DEFAULT_BACKUP_SETTINGS_CONFIG);
       setPrefillStudent(null);
       setPrefillGtk(null);
@@ -192,17 +201,29 @@ export default function App() {
     async (token: string) => {
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        const [reqRes, stuRes, gtkRes, rombelRes, agRes, tuStaffRes, backupSetRes, repoStatRes] =
-          await Promise.all([
-            fetch('/api/requests', { headers }),
-            fetch('/api/students', { headers }),
-            fetch('/api/gtk', { headers }),
-            fetch('/api/rombel', { headers }),
-            fetch('/api/agenda', { headers }),
-            fetch('/api/tu-staff/settings', { headers }),
-            fetch('/api/backup/settings', { headers }),
-            fetch('/api/repositories/status', { headers }),
-          ]);
+        const [
+          reqRes,
+          stuRes,
+          gtkRes,
+          rombelRes,
+          agRes,
+          tuStaffRes,
+          backupSetRes,
+          repoStatRes,
+          lockRes,
+          logsRes,
+        ] = await Promise.all([
+          fetch('/api/requests', { headers }),
+          fetch('/api/students', { headers }),
+          fetch('/api/gtk', { headers }),
+          fetch('/api/rombel', { headers }),
+          fetch('/api/agenda', { headers }),
+          fetch('/api/tu-staff/settings', { headers }),
+          fetch('/api/backup/settings', { headers }),
+          fetch('/api/repositories/status', { headers }),
+          fetch('/api/academic-year-lock', { headers }),
+          fetch('/api/movement-logs', { headers }),
+        ]);
 
         if (
           reqRes.status === 401 ||
@@ -212,7 +233,9 @@ export default function App() {
           agRes.status === 401 ||
           tuStaffRes.status === 401 ||
           backupSetRes.status === 401 ||
-          repoStatRes.status === 401
+          repoStatRes.status === 401 ||
+          lockRes.status === 401 ||
+          logsRes.status === 401
         ) {
           handleLockToPemohon('Sesi Petugas TU berakhir. Silakan verifikasi token kembali.');
           return;
@@ -225,6 +248,8 @@ export default function App() {
         if (agRes.ok) setAgendaEntries((await agRes.json()) as AgendaEntry[]);
         if (tuStaffRes.ok) setTuStaffConfig((await tuStaffRes.json()) as TuStaffConfig);
         if (backupSetRes.ok) setBackupSettings((await backupSetRes.json()) as BackupSettingsConfig);
+        if (lockRes.ok) setAcademicYearLock((await lockRes.json()) as AcademicYearLockConfig);
+        if (logsRes.ok) setMovementLogs((await logsRes.json()) as DataMovementLogEntry[]);
         if (repoStatRes.ok) {
           const statPayload = (await repoStatRes.json()) as {
             repositories?: RepositoryStatusItem[];
@@ -239,6 +264,19 @@ export default function App() {
     },
     [handleLockToPemohon]
   );
+
+  const refreshMovementLogs = useCallback(async (token: string) => {
+    try {
+      const res = await fetch('/api/movement-logs', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        setMovementLogs((await res.json()) as DataMovementLogEntry[]);
+      }
+    } catch {
+      // Non-fatal refresh error
+    }
+  }, []);
 
   const refreshCurrentRequests = useCallback(async () => {
     if (userMode === 'petugas' && sessionToken) {
@@ -562,10 +600,11 @@ export default function App() {
       setStudents((prev) =>
         isNew ? [record, ...prev] : prev.map((item) => (item.id === record.id ? record : item))
       );
+      void refreshMovementLogs(sessionToken);
       setToastMessage(
         isNew
-          ? `Peserta didik ${record.nama} ditambahkan ke Database Dapodik.`
-          : `Data Dapodik ${record.nama} berhasil diperbarui.`
+          ? `Peserta didik ${record.nama} ditambahkan ke Database TP ${record.tahunPelajaran || academicYearLock.tahunPelajaran}.`
+          : `Data Dapodik ${record.nama} berhasil diperbarui & terekam di pelacakan.`
       );
     } catch {
       setToastMessage('Gagal terhubung ke server Database Dapodik.');
@@ -585,7 +624,8 @@ export default function App() {
       }
       if (res.ok) {
         setStudents((prev) => prev.filter((item) => item.id !== id));
-        setToastMessage('Data peserta didik dihapus dari database.');
+        void refreshMovementLogs(sessionToken);
+        setToastMessage('Data peserta didik dihapus & tercatat keluar di pelacakan data.');
       }
     } catch {
       setToastMessage('Gagal menghapus data peserta didik.');
@@ -622,10 +662,14 @@ export default function App() {
         students: DapodikStudent[];
         addedCount: number;
         updatedCount: number;
+        academicYearLock?: AcademicYearLockConfig;
+        movementLogs?: DataMovementLogEntry[];
       };
       setStudents(result.students);
+      if (result.academicYearLock) setAcademicYearLock(result.academicYearLock);
+      if (Array.isArray(result.movementLogs)) setMovementLogs(result.movementLogs);
       setToastMessage(
-        `Impor selesai & tersimpan di repositori Siswa: ${result.addedCount} siswa baru, ${result.updatedCount} diperbarui (total ${result.students.length} siswa).`
+        `Impor selesai & dikunci ke Database Peserta Didik TP ${result.academicYearLock?.tahunPelajaran || academicYearLock.tahunPelajaran}: ${result.addedCount} masuk, ${result.updatedCount} diperbarui (total ${result.students.length} siswa).`
       );
       return true;
     } catch {
@@ -812,6 +856,7 @@ export default function App() {
       setGtkList((prev) =>
         isNew ? [record, ...prev] : prev.map((item) => (item.id === record.id ? record : item))
       );
+      void refreshMovementLogs(sessionToken);
       if (!isNew && tuStaffConfig.activeGtkId === record.id) {
         const staffRes = await fetch('/api/tu-staff/settings', {
           headers: { Authorization: `Bearer ${sessionToken}` },
@@ -821,7 +866,7 @@ export default function App() {
         }
       }
       setToastMessage(
-        `Data GTK ${record.nama} disimpan (${record.dukcapilStatus}).`
+        `Data GTK ${record.nama} disimpan & tercatat di pelacakan (${record.dukcapilStatus}).`
       );
     } catch {
       setToastMessage('Gagal terhubung ke server Database GTK.');
@@ -841,13 +886,14 @@ export default function App() {
       }
       if (res.ok) {
         setGtkList((prev) => prev.filter((item) => item.id !== id));
+        void refreshMovementLogs(sessionToken);
         const staffRes = await fetch('/api/tu-staff/settings', {
           headers: { Authorization: `Bearer ${sessionToken}` },
         });
         if (staffRes.ok) {
           setTuStaffConfig((await staffRes.json()) as TuStaffConfig);
         }
-        setToastMessage('Data GTK dihapus dari database.');
+        setToastMessage('Data GTK dihapus & tercatat keluar di pelacakan data.');
       }
     } catch {
       setToastMessage('Gagal menghapus data GTK.');
@@ -881,15 +927,61 @@ export default function App() {
         gtkList: DapodikGtk[];
         addedCount: number;
         updatedCount: number;
+        academicYearLock?: AcademicYearLockConfig;
+        movementLogs?: DataMovementLogEntry[];
       };
       setGtkList(result.gtkList);
+      if (result.academicYearLock) setAcademicYearLock(result.academicYearLock);
+      if (Array.isArray(result.movementLogs)) setMovementLogs(result.movementLogs);
       setToastMessage(
-        `Impor GTK selesai & tersimpan di repositori PTK: ${result.addedCount} GTK baru, ${result.updatedCount} diperbarui (total ${result.gtkList.length} GTK).`
+        `Impor GTK selesai & dikunci ke Database GTK TP ${result.academicYearLock?.tahunPelajaran || academicYearLock.tahunPelajaran}: ${result.addedCount} masuk, ${result.updatedCount} diperbarui (total ${result.gtkList.length} GTK).`
       );
       return true;
     } catch {
       setToastMessage('Gagal mengimpor data GTK ke server repositori.');
       return false;
+    }
+  };
+
+  const handleToggleDatabaseLock = async (
+    domain: 'students' | 'gtk',
+    locked: boolean
+  ): Promise<void> => {
+    if (!sessionToken) return;
+    try {
+      const payload = domain === 'students' ? { studentsLocked: locked } : { gtkLocked: locked };
+      const res = await fetch('/api/academic-year-lock', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      if (res.status === 401) {
+        handleLockToPemohon('Sesi Petugas TU berakhir.');
+        return;
+      }
+      if (!res.ok) {
+        setToastMessage('Gagal memperbarui status penguncian database.');
+        return;
+      }
+      const result = (await res.json()) as {
+        academicYearLock: AcademicYearLockConfig;
+        students?: DapodikStudent[];
+        gtkList?: DapodikGtk[];
+      };
+      setAcademicYearLock(result.academicYearLock);
+      if (Array.isArray(result.students)) setStudents(result.students);
+      if (Array.isArray(result.gtkList)) setGtkList(result.gtkList);
+      const label = domain === 'students' ? 'Database Peserta Didik' : 'Database GTK';
+      setToastMessage(
+        locked
+          ? `${label} dikunci ke Tahun Pelajaran ${result.academicYearLock.tahunPelajaran}.`
+          : `Kunci ${label} TP ${result.academicYearLock.tahunPelajaran} dibuka sementara.`
+      );
+    } catch {
+      setToastMessage('Terjadi gangguan koneksi saat mengubah status penguncian database.');
     }
   };
 
@@ -1015,7 +1107,7 @@ export default function App() {
   const handleRefreshRepositoryStatuses = async () => {
     if (!sessionToken) return;
     await loadProtectedData(sessionToken);
-    setToastMessage('Status 6 repositori database berhasil disegarkan.');
+    setToastMessage('Status 7 repositori database berhasil disegarkan.');
   };
 
   const handleExportBackupBundle = async (
@@ -1095,10 +1187,12 @@ export default function App() {
           students: DapodikStudent[];
           gtkList: DapodikGtk[];
           rombels: DapodikRombel[];
+          movementLogs?: DataMovementLogEntry[];
           kopSurat: KopSuratConfig;
           reportingPortal: ReportingPortalConfig;
           tuStaff: TuStaffConfig;
           backupSettings: BackupSettingsConfig;
+          academicYearLock?: AcademicYearLockConfig;
         };
       };
       setRequests(result.data.requests);
@@ -1106,10 +1200,12 @@ export default function App() {
       setStudents(result.data.students);
       setGtkList(result.data.gtkList);
       setRombels(result.data.rombels);
+      if (Array.isArray(result.data.movementLogs)) setMovementLogs(result.data.movementLogs);
       setKopSuratConfig(result.data.kopSurat);
       setReportingPortal(result.data.reportingPortal);
       setTuStaffConfig(result.data.tuStaff);
       setBackupSettings(result.data.backupSettings);
+      if (result.data.academicYearLock) setAcademicYearLock(result.data.academicYearLock);
       setRepositoryStatuses(result.repositories);
       const msg = `Restore selesai (${result.summary.restoredKeys.length} repositori berhasil dipulihkan).`;
       setToastMessage(msg);
@@ -1216,6 +1312,7 @@ export default function App() {
         remainingCount: number;
         items: unknown[];
         tuStaff?: TuStaffConfig;
+        movementLogs?: DataMovementLogEntry[];
       };
 
       if (result.target === 'students') {
@@ -1229,6 +1326,9 @@ export default function App() {
         setRequests(result.items as ServiceRequest[]);
       } else if (result.target === 'agenda') {
         setAgendaEntries(result.items as AgendaEntry[]);
+      }
+      if (Array.isArray(result.movementLogs)) {
+        setMovementLogs(result.movementLogs);
       }
 
       setToastMessage(
@@ -1381,6 +1481,9 @@ export default function App() {
                 students={students}
                 rombels={rombels}
                 userMode={userMode}
+                academicYearLock={academicYearLock}
+                movementLogs={movementLogs}
+                onToggleDatabaseLock={(locked) => handleToggleDatabaseLock('students', locked)}
                 onSaveStudent={handleSaveStudent}
                 onDeleteStudent={handleDeleteStudent}
                 onImportStudents={handleImportStudents}
@@ -1411,6 +1514,9 @@ export default function App() {
             (userMode === 'petugas' && sessionToken ? (
               <GtkDatabaseView
                 gtkList={gtkList}
+                academicYearLock={academicYearLock}
+                movementLogs={movementLogs}
+                onToggleDatabaseLock={(locked) => handleToggleDatabaseLock('gtk', locked)}
                 onSaveGtk={handleSaveGtk}
                 onDeleteGtk={handleDeleteGtk}
                 onImportGtk={handleImportGtk}
@@ -1529,6 +1635,8 @@ export default function App() {
                 students={students}
                 gtkList={gtkList}
                 rombels={rombels}
+                movementLogs={movementLogs}
+                academicYearLock={academicYearLock}
                 backupSettings={backupSettings}
                 repositoryStatuses={repositoryStatuses}
                 onRefreshStatuses={handleRefreshRepositoryStatuses}

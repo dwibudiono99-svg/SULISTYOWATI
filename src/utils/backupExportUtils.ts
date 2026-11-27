@@ -5,6 +5,7 @@ import {
   DapodikGtk,
   DapodikRombel,
   DapodikStudent,
+  DataMovementLogEntry,
   ServiceRequest,
 } from '../types/tu';
 import { gtkToRowArray, GTK_DAPODIK_HEADERS } from './gtkDapodikValidation';
@@ -111,6 +112,7 @@ export function exportCombinedExcelBackup(data: {
   students: DapodikStudent[];
   gtkList: DapodikGtk[];
   rombels: DapodikRombel[];
+  movementLogs?: DataMovementLogEntry[];
 }): Uint8Array {
   const wb = XLSX.utils.book_new();
 
@@ -125,6 +127,7 @@ export function exportCombinedExcelBackup(data: {
     ['Peserta Didik Dapodik', data.students.length],
     ['GTK Dapodik', data.gtkList.length],
     ['Rombel & Wali Kelas', data.rombels.length],
+    ['Log Pelacakan Keluar Masuk Data', data.movementLogs?.length ?? 0],
   ];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryRows), 'Ringkasan');
 
@@ -208,6 +211,39 @@ export function exportCombinedExcelBackup(data: {
     r.ruangan,
   ]);
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([romHeaders, ...romRows]), 'Rombel');
+
+  // Sheet 7: Pelacakan Keluar Masuk Data
+  if (data.movementLogs && data.movementLogs.length > 0) {
+    const movHeaders = [
+      'No',
+      'Waktu',
+      'Database',
+      'Arah',
+      'Sumber',
+      'Tahun Pelajaran',
+      'Nama',
+      'NISN/NIP/NIK',
+      'Rombel/Jabatan',
+      'Status',
+      'Keterangan',
+      'Petugas',
+    ];
+    const movRows = data.movementLogs.map((m, idx) => [
+      idx + 1,
+      m.timestamp,
+      m.domain === 'siswa' ? 'Siswa' : 'GTK',
+      m.direction,
+      m.source,
+      m.tahunPelajaran,
+      m.nama,
+      m.identityNumber,
+      m.unitOrRole,
+      m.statusLabel,
+      m.note,
+      m.actor,
+    ]);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([movHeaders, ...movRows]), 'Pelacakan Data');
+  }
 
   return XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as Uint8Array;
 }

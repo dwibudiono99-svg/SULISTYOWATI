@@ -1,6 +1,8 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
+  AcademicYearLockConfig,
   AgendaEntry,
   BackupBundlePayload,
   BackupRepositoryKey,
@@ -9,6 +11,7 @@ import type {
   DapodikGtk,
   DapodikRombel,
   DapodikStudent,
+  DataMovementLogEntry,
   KopDividerStyle,
   KopSuratConfig,
   KopSuratMode,
@@ -26,6 +29,8 @@ export const AUTH_DATA_DIR = path.resolve(process.cwd(), 'data');
 export const AUTH_STORE_PATH = path.resolve(AUTH_DATA_DIR, 'tu_auth.json');
 export const LEGACY_STORE_PATH = path.resolve(AUTH_DATA_DIR, 'tu_store.json');
 
+export const CURRENT_ACADEMIC_YEAR = '2026/2027';
+
 export const REPOSITORY_FILES = {
   requests: path.resolve(REPO_DIR, 'persuratan-permohonan.json'),
   agenda: path.resolve(REPO_DIR, 'persuratan-agenda.json'),
@@ -33,6 +38,7 @@ export const REPOSITORY_FILES = {
   students: path.resolve(REPO_DIR, 'dapodik-siswa.json'),
   gtk: path.resolve(REPO_DIR, 'dapodik-gtk.json'),
   rombels: path.resolve(REPO_DIR, 'dapodik-rombel.json'),
+  movementLogs: path.resolve(REPO_DIR, 'dapodik-mutasi-log.json'),
 } as const;
 
 export const DEFAULT_KOP_SURAT: KopSuratConfig = {
@@ -89,6 +95,18 @@ export const DEFAULT_BACKUP_SETTINGS: BackupSettingsConfig = {
   updatedBy: 'Sulistyowati, S.Pd.',
 };
 
+export const DEFAULT_ACADEMIC_YEAR_LOCK: AcademicYearLockConfig = {
+  tahunPelajaran: CURRENT_ACADEMIC_YEAR,
+  studentsLocked: true,
+  studentsLockedAt: '2026-11-25T07:00:00+07:00',
+  studentsLockedBy: 'Sulistyowati, S.Pd.',
+  gtkLocked: true,
+  gtkLockedAt: '2026-11-25T07:00:00+07:00',
+  gtkLockedBy: 'Sulistyowati, S.Pd.',
+  updatedAt: '2026-11-25T07:00:00+07:00',
+  updatedBy: 'Sulistyowati, S.Pd.',
+};
+
 export interface ClaimedTokenRecord {
   salt: string;
   hash: string;
@@ -100,6 +118,7 @@ export interface PersuratanSettingsData {
   reportingPortal: ReportingPortalConfig;
   tuStaff?: TuStaffConfig;
   backup?: BackupSettingsConfig;
+  academicYearLock?: AcademicYearLockConfig;
 }
 
 export interface RepositoryEnvelope<T> {
@@ -229,7 +248,81 @@ const VALID_BACKUP_SCOPES = new Set<BackupScopeKey>([
   'students',
   'gtk',
   'rombels',
+  'movementLogs',
 ]);
+
+export function sanitizeAcademicYearLock(
+  input: unknown,
+  fallback: AcademicYearLockConfig = DEFAULT_ACADEMIC_YEAR_LOCK
+): AcademicYearLockConfig {
+  if (!input || typeof input !== 'object') return fallback;
+  const raw = input as Partial<AcademicYearLockConfig>;
+  const tahunPelajaran =
+    typeof raw.tahunPelajaran === 'string' && raw.tahunPelajaran.trim()
+      ? raw.tahunPelajaran.trim().slice(0, 24)
+      : CURRENT_ACADEMIC_YEAR;
+  return {
+    tahunPelajaran,
+    studentsLocked: raw.studentsLocked !== false,
+    studentsLockedAt:
+      typeof raw.studentsLockedAt === 'string' && raw.studentsLockedAt
+        ? raw.studentsLockedAt
+        : fallback.studentsLockedAt,
+    studentsLockedBy:
+      typeof raw.studentsLockedBy === 'string' && raw.studentsLockedBy.trim()
+        ? raw.studentsLockedBy.trim().slice(0, 160)
+        : fallback.studentsLockedBy,
+    gtkLocked: raw.gtkLocked !== false,
+    gtkLockedAt:
+      typeof raw.gtkLockedAt === 'string' && raw.gtkLockedAt
+        ? raw.gtkLockedAt
+        : fallback.gtkLockedAt,
+    gtkLockedBy:
+      typeof raw.gtkLockedBy === 'string' && raw.gtkLockedBy.trim()
+        ? raw.gtkLockedBy.trim().slice(0, 160)
+        : fallback.gtkLockedBy,
+    updatedAt:
+      typeof raw.updatedAt === 'string' && raw.updatedAt
+        ? raw.updatedAt
+        : new Date().toISOString(),
+    updatedBy:
+      typeof raw.updatedBy === 'string' && raw.updatedBy.trim()
+        ? raw.updatedBy.trim().slice(0, 160)
+        : fallback.updatedBy,
+  };
+}
+
+export function stampStudentAcademicYear(
+  student: DapodikStudent,
+  tahunPelajaran: string,
+  locked: boolean,
+  actorName: string,
+  nowIso: string
+): DapodikStudent {
+  return {
+    ...student,
+    tahunPelajaran: student.tahunPelajaran?.trim() || tahunPelajaran,
+    lockedToAcademicYear: locked,
+    lockedAt: locked ? student.lockedAt || nowIso : student.lockedAt || '',
+    lockedBy: locked ? student.lockedBy || actorName : student.lockedBy || '',
+  };
+}
+
+export function stampGtkAcademicYear(
+  gtk: DapodikGtk,
+  tahunPelajaran: string,
+  locked: boolean,
+  actorName: string,
+  nowIso: string
+): DapodikGtk {
+  return {
+    ...gtk,
+    tahunPelajaran: gtk.tahunPelajaran?.trim() || tahunPelajaran,
+    lockedToAcademicYear: locked,
+    lockedAt: locked ? gtk.lockedAt || nowIso : gtk.lockedAt || '',
+    lockedBy: locked ? gtk.lockedBy || actorName : gtk.lockedBy || '',
+  };
+}
 
 export function isValidEmailAddress(email: string): boolean {
   return /^[^\s@<>()[\]\\,;:\s@"]+@[^\s@<>()[\]\\,;:\s@"]+\.[^\s@<>()[\]\\,;:\s@"]{2,}$/.test(
@@ -598,7 +691,44 @@ export function ensureRepositoriesInitialized(): void {
       reportingPortal: portalRes,
       tuStaff: tuStaffRes,
       backup: backupRes,
+      academicYearLock: DEFAULT_ACADEMIC_YEAR_LOCK,
     });
+  }
+
+  if (!fs.existsSync(REPOSITORY_FILES.movementLogs)) {
+    writeMovementLogsRepository([]);
+  }
+
+  // Ensure pre-existing Siswa & GTK records inherit TP 2026/2027 lock tags if missing
+  const lockNow = DEFAULT_ACADEMIC_YEAR_LOCK;
+  const backfillIso = new Date().toISOString();
+  const existingStudents = readStudentsRepository();
+  if (existingStudents.some((s) => !s.tahunPelajaran || s.lockedToAcademicYear === undefined)) {
+    writeStudentsRepository(
+      existingStudents.map((s) =>
+        stampStudentAcademicYear(
+          s,
+          lockNow.tahunPelajaran,
+          lockNow.studentsLocked,
+          lockNow.studentsLockedBy,
+          s.vervalPdSyncAt || backfillIso
+        )
+      )
+    );
+  }
+  const existingGtk = readGtkRepository();
+  if (existingGtk.some((g) => !g.tahunPelajaran || g.lockedToAcademicYear === undefined)) {
+    writeGtkRepository(
+      existingGtk.map((g) =>
+        stampGtkAcademicYear(
+          g,
+          lockNow.tahunPelajaran,
+          lockNow.gtkLocked,
+          lockNow.gtkLockedBy,
+          g.dukcapilCheckedAt || backfillIso
+        )
+      )
+    );
   }
 
   if (!fs.existsSync(AUTH_STORE_PATH) && legacy?.claimedToken) {
@@ -674,16 +804,19 @@ export function writeAgendaRepository(agenda: AgendaEntry[]): RepositoryEnvelope
 export function readSettingsRepository(): PersuratanSettingsData & {
   tuStaff: TuStaffConfig;
   backup: BackupSettingsConfig;
+  academicYearLock: AcademicYearLockConfig;
 } {
   ensureRepositoriesInitialized();
   const fallback: PersuratanSettingsData & {
     tuStaff: TuStaffConfig;
     backup: BackupSettingsConfig;
+    academicYearLock: AcademicYearLockConfig;
   } = {
     kopSurat: DEFAULT_KOP_SURAT,
     reportingPortal: DEFAULT_REPORTING_PORTAL,
     tuStaff: DEFAULT_TU_STAFF,
     backup: DEFAULT_BACKUP_SETTINGS,
+    academicYearLock: DEFAULT_ACADEMIC_YEAR_LOCK,
   };
   const env = readEnvelope<PersuratanSettingsData>(
     REPOSITORY_FILES.settings,
@@ -698,6 +831,10 @@ export function readSettingsRepository(): PersuratanSettingsData & {
     reportingPortal: sanitizeReportingPortal(env.data?.reportingPortal, DEFAULT_REPORTING_PORTAL),
     tuStaff: sanitizeTuStaffConfig(env.data?.tuStaff, gtkList, DEFAULT_TU_STAFF),
     backup: sanitizeBackupSettings(env.data?.backup, DEFAULT_BACKUP_SETTINGS).config,
+    academicYearLock: sanitizeAcademicYearLock(
+      env.data?.academicYearLock,
+      DEFAULT_ACADEMIC_YEAR_LOCK
+    ),
   };
 }
 
@@ -785,15 +922,57 @@ export function writeRombelsRepository(rombels: DapodikRombel[]): RepositoryEnve
   );
 }
 
+// --- Pelacakan Keluar Masuk Data Siswa & GTK ---
+export function readMovementLogsRepository(): DataMovementLogEntry[] {
+  ensureRepositoriesInitialized();
+  const env = readEnvelope<DataMovementLogEntry[]>(
+    REPOSITORY_FILES.movementLogs,
+    'dapodik-mutasi-log',
+    'Database Repositori Pelacakan Keluar Masuk Data Siswa & GTK',
+    [],
+    (arr) => arr.length
+  );
+  return Array.isArray(env.data) ? env.data : [];
+}
+
+export function writeMovementLogsRepository(
+  logs: DataMovementLogEntry[]
+): RepositoryEnvelope<DataMovementLogEntry[]> {
+  return writeEnvelope(
+    REPOSITORY_FILES.movementLogs,
+    'dapodik-mutasi-log',
+    'Database Repositori Pelacakan Keluar Masuk Data Siswa & GTK',
+    logs,
+    logs.length
+  );
+}
+
+export function appendMovementLogs(
+  entries: Array<Omit<DataMovementLogEntry, 'id'>>
+): DataMovementLogEntry[] {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return readMovementLogsRepository();
+  }
+  const existing = readMovementLogsRepository();
+  const stamped: DataMovementLogEntry[] = entries.map((item, idx) => ({
+    ...item,
+    id: `mov-${Date.now()}-${idx}-${crypto.randomUUID().slice(0, 6)}`,
+  }));
+  const merged = [...stamped, ...existing].slice(0, 10000);
+  writeMovementLogsRepository(merged);
+  return merged;
+}
+
 export function getRepositoryStatuses(): RepositoryStatusItem[] {
   ensureRepositoriesInitialized();
   const specs: Array<{ key: keyof typeof REPOSITORY_FILES; label: string }> = [
     { key: 'requests', label: 'Persuratan: Permohonan Layanan' },
     { key: 'agenda', label: 'Persuratan: Buku Agenda Surat' },
     { key: 'settings', label: 'Persuratan: Kop & Portal Layanan' },
-    { key: 'students', label: 'Database Siswa Dapodik' },
-    { key: 'gtk', label: 'Database GTK Dapodik' },
+    { key: 'students', label: 'Database Siswa Dapodik (TP 2026/2027)' },
+    { key: 'gtk', label: 'Database GTK Dapodik (TP 2026/2027)' },
     { key: 'rombels', label: 'Database Rombel & Wali Kelas' },
+    { key: 'movementLogs', label: 'Pelacakan Keluar Masuk Data' },
   ];
 
   return specs.map(({ key, label }) => {
@@ -831,6 +1010,8 @@ export function buildBackupBundle(
   const students = includeAll || scope === 'students' ? readStudentsRepository() : undefined;
   const gtk = includeAll || scope === 'gtk' ? readGtkRepository() : undefined;
   const rombels = includeAll || scope === 'rombels' ? readRombelsRepository() : undefined;
+  const movementLogs =
+    includeAll || scope === 'movementLogs' ? readMovementLogsRepository() : undefined;
 
   return {
     app: 'SIP-TU-SMAN9-SBY',
@@ -844,6 +1025,7 @@ export function buildBackupBundle(
       students: students?.length ?? 0,
       gtk: gtk?.length ?? 0,
       rombels: rombels?.length ?? 0,
+      movementLogs: movementLogs?.length ?? 0,
       settings: settings ? 1 : 0,
     },
     repositories: {
@@ -853,6 +1035,7 @@ export function buildBackupBundle(
       ...(students !== undefined ? { students } : {}),
       ...(gtk !== undefined ? { gtk } : {}),
       ...(rombels !== undefined ? { rombels } : {}),
+      ...(movementLogs !== undefined ? { movementLogs } : {}),
     },
   };
 }
@@ -882,6 +1065,7 @@ function extractRepositoriesFromInput(
       'dapodik-siswa': 'students',
       'dapodik-gtk': 'gtk',
       'dapodik-rombel': 'rombels',
+      'dapodik-mutasi-log': 'movementLogs',
     };
     const matchedKey = repoMap[obj.repository];
     if (matchedKey) {
@@ -903,7 +1087,15 @@ export function restoreBackupBundle(
     return {
       summary: {
         restoredKeys: [],
-        counts: { requests: 0, agenda: 0, settings: 0, students: 0, gtk: 0, rombels: 0 },
+        counts: {
+          requests: 0,
+          agenda: 0,
+          settings: 0,
+          students: 0,
+          gtk: 0,
+          rombels: 0,
+          movementLogs: 0,
+        },
         restoredAt: new Date().toISOString(),
       },
       error: 'Format file backup JSON tidak dikenali. Gunakan file hasil ekspor SIP TU SMAN 9 Surabaya.',
@@ -919,19 +1111,46 @@ export function restoreBackupBundle(
     students: 0,
     gtk: 0,
     rombels: 0,
+    movementLogs: 0,
   };
   const nowIso = new Date().toISOString();
+  const initialLock = readSettingsRepository().academicYearLock;
+  const restoreLogs: Array<Omit<DataMovementLogEntry, 'id'>> = [];
 
-  // 1. Restore GTK first so Rombel & TuStaff can resolve GTK IDs accurately
+  // 1. Restore movementLogs first if replace so subsequent restored events append cleanly
+  if (allowedSet.has('movementLogs') && Array.isArray(repos.movementLogs)) {
+    const sanitizedLogs = repos.movementLogs.filter(
+      (item): item is DataMovementLogEntry =>
+        Boolean(item && typeof item === 'object' && typeof item.nama === 'string' && item.timestamp)
+    );
+    if (mode === 'replace') {
+      writeMovementLogsRepository(sanitizedLogs);
+    } else {
+      const existing = readMovementLogsRepository();
+      const existingIds = new Set(existing.map((e) => e.id));
+      const newOnes = sanitizedLogs.filter((item) => !existingIds.has(item.id));
+      writeMovementLogsRepository([...newOnes, ...existing]);
+    }
+    counts.movementLogs = sanitizedLogs.length;
+    restoredKeys.push('movementLogs');
+  }
+
+  // 2. Restore GTK first so Rombel & TuStaff can resolve GTK IDs accurately
   if (allowedSet.has('gtk') && Array.isArray(repos.gtk)) {
     const sanitizedIncoming = repos.gtk
       .filter((g): g is DapodikGtk => Boolean(g && typeof g === 'object' && typeof g.nama === 'string' && g.nama.trim()))
       .map((g, idx) =>
-        applyDispendukcapilCheck({
-          ...g,
-          fotoDataUrl: isSafeRasterImageDataUrl(g.fotoDataUrl ?? '') ? (g.fotoDataUrl ?? '') : '',
-          id: typeof g.id === 'string' && g.id.trim() ? g.id.trim() : `gtk-rst-${Date.now()}-${idx}`,
-        })
+        stampGtkAcademicYear(
+          applyDispendukcapilCheck({
+            ...g,
+            fotoDataUrl: isSafeRasterImageDataUrl(g.fotoDataUrl ?? '') ? (g.fotoDataUrl ?? '') : '',
+            id: typeof g.id === 'string' && g.id.trim() ? g.id.trim() : `gtk-rst-${Date.now()}-${idx}`,
+          }),
+          initialLock.tahunPelajaran,
+          initialLock.gtkLocked,
+          actorName,
+          nowIso
+        )
       );
 
     if (mode === 'replace') {
@@ -948,12 +1167,18 @@ export function restoreBackupBundle(
             (inc.nuptk && cur.nuptk === inc.nuptk)
         );
         if (idx >= 0) {
-          existing[idx] = applyDispendukcapilCheck({
-            ...existing[idx],
-            ...inc,
-            fotoDataUrl: inc.fotoDataUrl || existing[idx].fotoDataUrl || '',
-            id: existing[idx].id,
-          });
+          existing[idx] = stampGtkAcademicYear(
+            applyDispendukcapilCheck({
+              ...existing[idx],
+              ...inc,
+              fotoDataUrl: inc.fotoDataUrl || existing[idx].fotoDataUrl || '',
+              id: existing[idx].id,
+            }),
+            initialLock.tahunPelajaran,
+            initialLock.gtkLocked,
+            actorName,
+            nowIso
+          );
         } else {
           existing.unshift(inc);
         }
@@ -961,20 +1186,44 @@ export function restoreBackupBundle(
       writeGtkRepository(existing);
       counts.gtk = sanitizedIncoming.length;
     }
+    if (sanitizedIncoming.length > 0 && !allowedSet.has('movementLogs')) {
+      restoreLogs.push({
+        timestamp: nowIso,
+        domain: 'gtk',
+        direction: 'MASUK',
+        source: 'restore-backup',
+        tahunPelajaran: initialLock.tahunPelajaran,
+        recordId: 'restore-gtk',
+        nama: `Pemulihan ${sanitizedIncoming.length} Data GTK`,
+        identityNumber: '-',
+        unitOrRole: 'Database GTK',
+        statusLabel: mode === 'replace' ? 'Timpa Penuh' : 'Gabung',
+        note: `Restore backup GTK (${sanitizedIncoming.length} data) dengan mode ${mode}.`,
+        actor: actorName,
+      });
+    }
     restoredKeys.push('gtk');
   }
 
   const latestGtkList = readGtkRepository();
 
-  // 2. Students
+  // 3. Students
   if (allowedSet.has('students') && Array.isArray(repos.students)) {
     const sanitizedIncoming = repos.students
       .filter((s): s is DapodikStudent => Boolean(s && typeof s === 'object' && typeof s.nama === 'string' && s.nama.trim()))
-      .map((s, idx) => ({
-        ...s,
-        id: typeof s.id === 'string' && s.id.trim() ? s.id.trim() : `pd-rst-${Date.now()}-${idx}`,
-        vervalPdSyncAt: s.vervalPdSyncAt || nowIso,
-      }));
+      .map((s, idx) =>
+        stampStudentAcademicYear(
+          {
+            ...s,
+            id: typeof s.id === 'string' && s.id.trim() ? s.id.trim() : `pd-rst-${Date.now()}-${idx}`,
+            vervalPdSyncAt: s.vervalPdSyncAt || nowIso,
+          },
+          initialLock.tahunPelajaran,
+          initialLock.studentsLocked,
+          actorName,
+          nowIso
+        )
+      );
 
     if (mode === 'replace') {
       writeStudentsRepository(sanitizedIncoming);
@@ -989,7 +1238,13 @@ export function restoreBackupBundle(
             (inc.nipd && cur.nipd === inc.nipd)
         );
         if (idx >= 0) {
-          existing[idx] = { ...existing[idx], ...inc, id: existing[idx].id };
+          existing[idx] = stampStudentAcademicYear(
+            { ...existing[idx], ...inc, id: existing[idx].id },
+            initialLock.tahunPelajaran,
+            initialLock.studentsLocked,
+            actorName,
+            nowIso
+          );
         } else {
           existing.unshift(inc);
         }
@@ -997,10 +1252,26 @@ export function restoreBackupBundle(
       writeStudentsRepository(existing);
       counts.students = sanitizedIncoming.length;
     }
+    if (sanitizedIncoming.length > 0 && !allowedSet.has('movementLogs')) {
+      restoreLogs.push({
+        timestamp: nowIso,
+        domain: 'siswa',
+        direction: 'MASUK',
+        source: 'restore-backup',
+        tahunPelajaran: initialLock.tahunPelajaran,
+        recordId: 'restore-siswa',
+        nama: `Pemulihan ${sanitizedIncoming.length} Peserta Didik`,
+        identityNumber: '-',
+        unitOrRole: 'Database Siswa',
+        statusLabel: mode === 'replace' ? 'Timpa Penuh' : 'Gabung',
+        note: `Restore backup Siswa (${sanitizedIncoming.length} data) dengan mode ${mode}.`,
+        actor: actorName,
+      });
+    }
     restoredKeys.push('students');
   }
 
-  // 3. Rombels
+  // 4. Rombels
   if (allowedSet.has('rombels') && Array.isArray(repos.rombels)) {
     const sanitizedIncoming = repos.rombels
       .filter((r): r is DapodikRombel => Boolean(r && typeof r === 'object' && typeof r.namaRombel === 'string' && r.namaRombel.trim()))
@@ -1041,7 +1312,7 @@ export function restoreBackupBundle(
     restoredKeys.push('rombels');
   }
 
-  // 4. Requests
+  // 5. Requests
   if (allowedSet.has('requests') && Array.isArray(repos.requests)) {
     const sanitizedIncoming = repos.requests
       .filter(
@@ -1080,7 +1351,7 @@ export function restoreBackupBundle(
     restoredKeys.push('requests');
   }
 
-  // 5. Agenda
+  // 6. Agenda
   if (allowedSet.has('agenda') && Array.isArray(repos.agenda)) {
     const sanitizedIncoming = repos.agenda
       .filter(
@@ -1121,7 +1392,7 @@ export function restoreBackupBundle(
     restoredKeys.push('agenda');
   }
 
-  // 6. Settings
+  // 7. Settings
   if (allowedSet.has('settings') && repos.settings && typeof repos.settings === 'object') {
     const currentSettings = readSettingsRepository();
     const rawSet = repos.settings;
@@ -1138,10 +1409,17 @@ export function restoreBackupBundle(
       backup: rawSet.backup
         ? sanitizeBackupSettings(rawSet.backup, currentSettings.backup).config
         : currentSettings.backup,
+      academicYearLock: rawSet.academicYearLock
+        ? sanitizeAcademicYearLock(rawSet.academicYearLock, currentSettings.academicYearLock)
+        : currentSettings.academicYearLock,
     };
     writeSettingsRepository(nextSettings);
     counts.settings = 1;
     restoredKeys.push('settings');
+  }
+
+  if (restoreLogs.length > 0) {
+    appendMovementLogs(restoreLogs);
   }
 
   if (restoredKeys.length === 0) {
@@ -1179,33 +1457,81 @@ export type DeduplicateRepoTarget = 'students' | 'gtk' | 'rombels' | 'requests' 
 
 export function deduplicateRepository(
   target: DeduplicateRepoTarget,
-  deleteIds: string[]
+  deleteIds: string[],
+  actorName = 'Petugas Tata Usaha'
 ): {
   deletedCount: number;
   remainingCount: number;
   items: unknown[];
   tuStaff?: TuStaffConfig;
+  movementLogs?: DataMovementLogEntry[];
 } {
   ensureRepositoriesInitialized();
   const idSet = new Set(deleteIds.map((id) => String(id).trim()).filter(Boolean));
+  const nowIso = new Date().toISOString();
+  const settings = readSettingsRepository();
+  const tp = settings.academicYearLock.tahunPelajaran || CURRENT_ACADEMIC_YEAR;
 
   if (target === 'students') {
     const current = readStudentsRepository();
+    const removed = current.filter((s) => idSet.has(s.id));
     const next = current.filter((s) => !idSet.has(s.id));
     writeStudentsRepository(next);
+
+    let movementLogs: DataMovementLogEntry[] | undefined;
+    if (removed.length > 0) {
+      movementLogs = appendMovementLogs(
+        removed.map((s) => ({
+          timestamp: nowIso,
+          domain: 'siswa',
+          direction: 'KELUAR',
+          source: 'hapus-duplikat',
+          tahunPelajaran: s.tahunPelajaran || tp,
+          recordId: s.id,
+          nama: s.nama,
+          identityNumber: s.nisn || s.nipd || s.nik || '-',
+          unitOrRole: s.rombelSaatIni || '-',
+          statusLabel: s.statusSiswa || 'Duplikat Dihapus',
+          note: 'Rekor duplikat dihapus melalui fitur Hapus Duplikasi Data.',
+          actor: actorName,
+        }))
+      );
+    }
+
     return {
-      deletedCount: current.length - next.length,
+      deletedCount: removed.length,
       remainingCount: next.length,
       items: next,
+      movementLogs,
     };
   }
 
   if (target === 'gtk') {
     const current = readGtkRepository();
+    const removed = current.filter((g) => idSet.has(g.id));
     const next = current.filter((g) => !idSet.has(g.id));
     writeGtkRepository(next);
 
-    const settings = readSettingsRepository();
+    let movementLogs: DataMovementLogEntry[] | undefined;
+    if (removed.length > 0) {
+      movementLogs = appendMovementLogs(
+        removed.map((g) => ({
+          timestamp: nowIso,
+          domain: 'gtk',
+          direction: 'KELUAR',
+          source: 'hapus-duplikat',
+          tahunPelajaran: g.tahunPelajaran || tp,
+          recordId: g.id,
+          nama: formatPtkDisplayName(g),
+          identityNumber: g.nip || g.nuptk || g.nik || '-',
+          unitOrRole: g.jabatanPtk || g.jenisPtk || '-',
+          statusLabel: g.statusKepegawaian || 'Duplikat Dihapus',
+          note: 'Rekor GTK duplikat dihapus melalui fitur Hapus Duplikasi Data.',
+          actor: actorName,
+        }))
+      );
+    }
+
     const hadOperator = settings.tuStaff.operators.some((op) => idSet.has(op.gtkId));
     const wasActive = Boolean(settings.tuStaff.activeGtkId && idSet.has(settings.tuStaff.activeGtkId));
     let updatedTuStaff = settings.tuStaff;
@@ -1223,7 +1549,7 @@ export function deduplicateRepository(
             wasActive && !nextFallbackOp
               ? 'Pegawai TU aktif dihapus saat pembersihan duplikasi GTK.'
               : settings.tuStaff.deactivatedReason,
-          updatedAt: new Date().toISOString(),
+          updatedAt: nowIso,
         },
         next,
         DEFAULT_TU_STAFF
@@ -1232,10 +1558,11 @@ export function deduplicateRepository(
     }
 
     return {
-      deletedCount: current.length - next.length,
+      deletedCount: removed.length,
       remainingCount: next.length,
       items: next,
       tuStaff: updatedTuStaff,
+      movementLogs,
     };
   }
 

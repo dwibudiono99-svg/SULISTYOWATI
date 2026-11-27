@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Download,
   FileSpreadsheet,
+  Lock,
   Upload,
   X,
   XCircle,
@@ -24,6 +25,8 @@ interface DapodikImportExportModalProps {
   open: boolean;
   initialTab?: 'import' | 'export';
   students: DapodikStudent[];
+  isDatabaseLocked?: boolean;
+  tahunPelajaran?: string;
   onClose: () => void;
   onConfirmImport: (imported: DapodikStudent[], mode: ImportMergeMode) => Promise<boolean | void> | void;
 }
@@ -32,6 +35,8 @@ export function DapodikImportExportModal({
   open,
   initialTab = 'import',
   students,
+  isDatabaseLocked = true,
+  tahunPelajaran = '2026/2027',
   onClose,
   onConfirmImport,
 }: DapodikImportExportModalProps) {
@@ -48,8 +53,11 @@ export function DapodikImportExportModal({
   useEffect(() => {
     if (open) {
       setActiveTab(initialTab);
+      if (isDatabaseLocked && mergeMode === 'replace') {
+        setMergeMode('upsert');
+      }
     }
-  }, [open, initialTab]);
+  }, [open, initialTab, isDatabaseLocked, mergeMode]);
 
   const previewStats = useMemo(() => {
     if (!parsedResult) return null;
@@ -283,8 +291,17 @@ export function DapodikImportExportModal({
 
                   {/* Opsi Penggabungan Data */}
                   <div className="rounded-xl border border-slate-200 bg-white p-4">
-                    <p className="text-xs font-semibold text-slate-800">
-                      Metode Penggabungan ke Database Siswa:
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-semibold text-slate-800">
+                        Metode Penggabungan ke Database Peserta Didik (TP {tahunPelajaran}):
+                      </p>
+                      <span className="inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-800">
+                        <Lock className="h-3 w-3" aria-hidden="true" />
+                        <span>Terkunci TP {tahunPelajaran} & Terlacak Mutasi</span>
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-600">
+                      Data hasil impor dikunci dalam Database Peserta Didik Tahun Pelajaran {tahunPelajaran}. Penambahan maupun pengurangan tetap terekam di Pelacakan Keluar Masuk Data.
                     </p>
                     <div className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-3">
                       {(
@@ -297,31 +314,41 @@ export function DapodikImportExportModal({
                           {
                             id: 'append',
                             title: 'Tambahkan Semua Baru',
-                            desc: 'Seluruh baris ditambahkan tanpa menimpa data yang ada.',
+                            desc: 'Seluruh baris ditambahkan tanpa menimpa data terkunci.',
                           },
                           {
                             id: 'replace',
-                            title: 'Ganti Seluruh Database',
-                            desc: 'Hapus daftar lama dan ganti penuh dengan file unggahan.',
+                            title: isDatabaseLocked
+                              ? 'Ganti Penuh (Terkunci)'
+                              : 'Ganti Seluruh Database',
+                            desc: isDatabaseLocked
+                              ? `Dinonaktifkan saat dikunci ke TP ${tahunPelajaran} agar data lama tidak terhapus massal.`
+                              : 'Hapus daftar lama dan ganti penuh dengan file unggahan.',
                           },
                         ] as const
-                      ).map((opt) => (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => setMergeMode(opt.id)}
-                          className={`rounded-lg border p-3 text-left transition-colors ${
-                            mergeMode === opt.id
-                              ? 'border-blue-600 bg-blue-50/70'
-                              : 'border-slate-200 hover:bg-slate-50'
-                          }`}
-                        >
-                          <div className="text-xs font-semibold text-slate-900">{opt.title}</div>
-                          <div className="mt-0.5 text-[11px] leading-snug text-slate-600">
-                            {opt.desc}
-                          </div>
-                        </button>
-                      ))}
+                      ).map((opt) => {
+                        const isBlocked = opt.id === 'replace' && isDatabaseLocked;
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            disabled={isBlocked}
+                            onClick={() => !isBlocked && setMergeMode(opt.id)}
+                            className={`rounded-lg border p-3 text-left transition-colors ${
+                              isBlocked
+                                ? 'cursor-not-allowed border-slate-200 bg-slate-100 opacity-60'
+                                : mergeMode === opt.id
+                                  ? 'border-blue-600 bg-blue-50/70'
+                                  : 'border-slate-200 hover:bg-slate-50'
+                            }`}
+                          >
+                            <div className="text-xs font-semibold text-slate-900">{opt.title}</div>
+                            <div className="mt-0.5 text-[11px] leading-snug text-slate-600">
+                              {opt.desc}
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 

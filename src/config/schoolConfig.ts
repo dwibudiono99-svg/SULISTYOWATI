@@ -1,10 +1,13 @@
 import {
+  AcademicYearLockConfig,
   BackupSettingsConfig,
   KopSuratConfig,
   ReportingPortalConfig,
   ServiceCatalogItem,
   TuStaffConfig,
 } from '../types/tu';
+
+export const CURRENT_ACADEMIC_YEAR = '2026/2027';
 
 export const SCHOOL_INFO = {
   province: 'PEMERINTAH PROVINSI JAWA TIMUR',
@@ -75,6 +78,18 @@ export const DEFAULT_BACKUP_SETTINGS_CONFIG: BackupSettingsConfig = {
   lastBackupBy: '',
   lastEmailSentAt: '',
   lastEmailRecipient: '',
+  updatedAt: '2026-11-25T07:00:00+07:00',
+  updatedBy: SCHOOL_INFO.staffName,
+};
+
+export const DEFAULT_ACADEMIC_YEAR_LOCK_CONFIG: AcademicYearLockConfig = {
+  tahunPelajaran: CURRENT_ACADEMIC_YEAR,
+  studentsLocked: true,
+  studentsLockedAt: '2026-11-25T07:00:00+07:00',
+  studentsLockedBy: SCHOOL_INFO.staffName,
+  gtkLocked: true,
+  gtkLockedAt: '2026-11-25T07:00:00+07:00',
+  gtkLockedBy: SCHOOL_INFO.staffName,
   updatedAt: '2026-11-25T07:00:00+07:00',
   updatedBy: SCHOOL_INFO.staffName,
 };

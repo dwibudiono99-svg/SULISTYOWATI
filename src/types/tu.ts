@@ -120,6 +120,10 @@ export interface DapodikStudent {
   noSeriIjazahSmp: string;
   statusSiswa: StudentStatus;
   vervalPdSyncAt: string;
+  tahunPelajaran?: string;
+  lockedToAcademicYear?: boolean;
+  lockedAt?: string;
+  lockedBy?: string;
 }
 
 export interface DapodikValidationResult {
@@ -318,6 +322,10 @@ export interface DapodikGtk {
   dukcapilStatus: DukcapilMatchStatus;
   dukcapilNotes: string;
   dukcapilCheckedAt: string;
+  tahunPelajaran?: string;
+  lockedToAcademicYear?: boolean;
+  lockedAt?: string;
+  lockedBy?: string;
 }
 
 export interface DapodikRombel {
@@ -334,13 +342,55 @@ export interface DapodikRombel {
   updatedAt?: string;
 }
 
+export interface AcademicYearLockConfig {
+  tahunPelajaran: string;
+  studentsLocked: boolean;
+  studentsLockedAt: string;
+  studentsLockedBy: string;
+  gtkLocked: boolean;
+  gtkLockedAt: string;
+  gtkLockedBy: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export type DataMovementDomain = 'siswa' | 'gtk';
+
+export type DataMovementDirection = 'MASUK' | 'KELUAR' | 'PERUBAHAN';
+
+export type DataMovementSource =
+  | 'impor-excel'
+  | 'input-manual'
+  | 'perubahan-status'
+  | 'edit-data'
+  | 'hapus-data'
+  | 'hapus-duplikat'
+  | 'restore-backup';
+
+export interface DataMovementLogEntry {
+  id: string;
+  timestamp: string;
+  domain: DataMovementDomain;
+  direction: DataMovementDirection;
+  source: DataMovementSource;
+  tahunPelajaran: string;
+  recordId: string;
+  nama: string;
+  identityNumber: string;
+  unitOrRole: string;
+  statusLabel: string;
+  note: string;
+  actor: string;
+}
+
 export type BackupRepositoryKey =
   | 'requests'
   | 'agenda'
   | 'settings'
   | 'students'
   | 'gtk'
-  | 'rombels';
+  | 'rombels'
+  | 'movementLogs';
 
 export type BackupScopeKey = 'all' | BackupRepositoryKey;
 
@@ -363,6 +413,7 @@ export interface BackupSettingsBundleData {
   reportingPortal?: ReportingPortalConfig;
   tuStaff?: TuStaffConfig;
   backup?: BackupSettingsConfig;
+  academicYearLock?: AcademicYearLockConfig;
 }
 
 export interface BackupBundlePayload {
@@ -377,6 +428,7 @@ export interface BackupBundlePayload {
     students: number;
     gtk: number;
     rombels: number;
+    movementLogs: number;
     settings: number;
   };
   repositories: {
@@ -386,6 +438,7 @@ export interface BackupBundlePayload {
     students?: DapodikStudent[];
     gtk?: DapodikGtk[];
     rombels?: DapodikRombel[];
+    movementLogs?: DataMovementLogEntry[];
   };
 }
 
@@ -396,4 +449,5 @@ export interface RepositoryStatusItem {
   totalRecords: number;
   updatedAt: string;
 }
+
 
